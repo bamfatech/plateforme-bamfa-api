@@ -1,0 +1,31 @@
+# Python / Django
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+*.sqlite3
+db.sqlite3
+.env
+.env.*
+!.env.example
+staticfiles/
+media/
+celerybeat-schedule
+
+# Tests / lint
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+coverage/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Divers
+*.log
