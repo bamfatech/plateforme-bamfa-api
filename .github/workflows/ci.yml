@@ -24,7 +24,7 @@ jobs:
           --health-retries 5
     env:
       POSTGRES_HOST: 127.0.0.1
-      DJANGO_SECRET_KEY: ci-secret-key
+      DJANGO_SECRET_KEY: ci-insecure-secret-key-at-least-32-chars
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
