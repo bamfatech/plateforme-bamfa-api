@@ -1,7 +1,7 @@
 import pytest
-from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.conf import settings as dj_settings
+from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient, APIRequestFactory
 from rest_framework_simplejwt.tokens import RefreshToken
 
