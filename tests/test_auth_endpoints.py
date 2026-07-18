@@ -106,3 +106,12 @@ def test_logout_sans_csrf_est_refuse_puis_efface_les_cookies_avec_csrf():
     ok = client.post("/api/v1/auth/logout/", HTTP_X_CSRFTOKEN=csrf_token)
     assert ok.status_code == 200
     assert ok.cookies[dj_settings.AUTH_COOKIE].value == ""
+
+
+@pytest.mark.django_db
+def test_csrf_endpoint_renvoie_un_token():
+    client = APIClient()
+    response = client.get("/api/v1/auth/csrf/")
+    assert response.status_code == 200
+    assert response.data["csrfToken"]  # non vide
+    assert "csrftoken" in response.cookies

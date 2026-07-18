@@ -92,3 +92,11 @@ class LogoutView(APIView):
         response = Response({"detail": "Déconnecté."})
         clear_auth_cookies(response)
         return response
+
+
+class CSRFTokenView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        return Response({"csrfToken": get_token(request)})
