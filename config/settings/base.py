@@ -106,6 +106,10 @@ SIMPLE_JWT = {
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
     "AUTH_HEADER_TYPES": ("Bearer",),
+    # Clé de signature dédiée aux JWT, découplée de la SECRET_KEY Django
+    # (permet de roter les tokens sans invalider sessions/reset de mot de passe).
+    # Par défaut = SECRET_KEY pour ne rien casser tant que JWT_SIGNING_KEY n'est pas défini.
+    "SIGNING_KEY": env("JWT_SIGNING_KEY", default=SECRET_KEY),
 }
 
 # Cookies d'authentification
