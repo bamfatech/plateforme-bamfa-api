@@ -73,3 +73,36 @@ def test_me_avec_cookie_renvoie_user():
     response = client.get("/api/v1/auth/me/")
     assert response.status_code == 200
     assert response.data["email"] == "a@bamfa.org"
+
+
+@pytest.mark.django_db
+def test_refresh_repose_un_nouvel_access():
+    User.objects.create_user(email="a@bamfa.org", password="motdepasse123")
+    client = APIClient()
+    client.post(
+        "/api/v1/auth/login/",
+        {"email": "a@bamfa.org", "password": "motdepasse123"},
+        format="json",
+    )
+    response = client.post("/api/v1/auth/refresh/")
+    assert response.status_code == 200
+    assert dj_settings.AUTH_COOKIE in response.cookies
+
+
+@pytest.mark.django_db
+def test_logout_sans_csrf_est_refuse_puis_efface_les_cookies_avec_csrf():
+    User.objects.create_user(email="a@bamfa.org", password="motdepasse123")
+    client = APIClient(enforce_csrf_checks=True)
+    client.post(
+        "/api/v1/auth/login/",
+        {"email": "a@bamfa.org", "password": "motdepasse123"},
+        format="json",
+    )
+    # Sans en-tête CSRF -> refusé (403) car requête authentifiée non sûre
+    refused = client.post("/api/v1/auth/logout/")
+    assert refused.status_code == 403
+    # Avec le token CSRF -> OK et cookies effacés
+    csrf_token = client.cookies["csrftoken"].value
+    ok = client.post("/api/v1/auth/logout/", HTTP_X_CSRFTOKEN=csrf_token)
+    assert ok.status_code == 200
+    assert ok.cookies[dj_settings.AUTH_COOKIE].value == ""
