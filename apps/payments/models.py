@@ -31,7 +31,9 @@ class Payment(models.Model):
         return f"{self.reference} — {self.amount} {self.currency} ({self.status})"
 
     def mark_confirmed(self):
+        """Passe le statut à confirmé en mémoire uniquement ; l'appelant doit appeler save()."""
         self.status = self.Status.CONFIRME
 
     def mark_failed(self):
+        """Passe le statut à échoué en mémoire uniquement ; l'appelant doit appeler save()."""
         self.status = self.Status.ECHOUE

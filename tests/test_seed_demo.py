@@ -14,6 +14,7 @@ def test_seed_demo_cree_les_donnees_et_est_idempotent():
     assert admin.is_superuser
     assert admin.groups.filter(name="Administrateur").exists()
     assert User.objects.filter(email="redacteur@bamfa.org").exists()
+    assert not User.objects.get(email="alumni@bamfa.org").is_staff
     assert Mandate.objects.filter(is_current=True).count() == 1
 
     # Idempotent : un second passage ne duplique rien.

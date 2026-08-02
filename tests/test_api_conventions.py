@@ -27,3 +27,10 @@ def test_handler_erreur_authentification():
 
 def test_handler_ignore_les_exceptions_non_drf():
     assert bamfa_exception_handler(ValueError("boom"), {}) is None
+
+
+def test_handler_erreur_validation_liste():
+    exc = exceptions.ValidationError(["Erreur globale."])
+    response = bamfa_exception_handler(exc, {})
+    assert response.data["error"]["message"] == "Requête invalide."
+    assert response.data["error"]["details"] == {"detail": ["Erreur globale."]}

@@ -16,6 +16,7 @@ DEMO_USERS = [
         "last_name": "Admin",
         "role": "Administrateur",
         "superuser": True,
+        "is_staff": True,
     },
     {
         "email": "redacteur@bamfa.org",
@@ -23,6 +24,7 @@ DEMO_USERS = [
         "last_name": "Rédacteur",
         "role": "Rédacteur de contenu",
         "superuser": False,
+        "is_staff": True,
     },
     {
         "email": "alumni@bamfa.org",
@@ -30,6 +32,7 @@ DEMO_USERS = [
         "last_name": "Alumni",
         "role": "Alumni",
         "superuser": False,
+        "is_staff": False,
     },
 ]
 
@@ -48,7 +51,7 @@ class Command(BaseCommand):
                 defaults={
                     "first_name": spec["first_name"],
                     "last_name": spec["last_name"],
-                    "is_staff": True,
+                    "is_staff": spec["is_staff"],
                     "is_superuser": spec["superuser"],
                 },
             )

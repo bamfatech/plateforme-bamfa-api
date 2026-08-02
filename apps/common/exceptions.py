@@ -20,6 +20,9 @@ def bamfa_exception_handler(exc, context):
     elif isinstance(data, dict):
         message = "Requête invalide."
         details = data
+    elif isinstance(data, list):
+        message = "Requête invalide."
+        details = {"detail": data}
     else:
         message = "Erreur."
         details = {"detail": data}
