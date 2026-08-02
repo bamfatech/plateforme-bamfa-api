@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     "apps.common",
     "apps.accounts",
+    "apps.payments",
 ]
 
 MIDDLEWARE = [
@@ -148,3 +149,8 @@ CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://127.0.0.1:
 CELERY_TASK_ALWAYS_EAGER = env.bool("CELERY_TASK_ALWAYS_EAGER", default=False)
 CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_TIMEZONE = TIME_ZONE
+
+# Paiement (manuel maintenant ; FedaPay/Kkiapay branchables plus tard)
+PAYMENT_PROVIDER = env(
+    "PAYMENT_PROVIDER", default="apps.payments.providers.ManualPaymentProvider"
+)
