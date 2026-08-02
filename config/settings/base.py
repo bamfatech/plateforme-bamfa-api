@@ -22,6 +22,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "drf_spectacular",
     "corsheaders",
+    "django_filters",
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "apps.common",
@@ -91,6 +92,14 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "apps.accounts.authentication.CookieJWTAuthentication",
     ],
+    "DEFAULT_PAGINATION_CLASS": "apps.common.pagination.DefaultPagination",
+    "PAGE_SIZE": 20,
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.SearchFilter",
+        "rest_framework.filters.OrderingFilter",
+    ],
+    "EXCEPTION_HANDLER": "apps.common.exceptions.bamfa_exception_handler",
 }
 
 SPECTACULAR_SETTINGS = {
