@@ -1,0 +1,5 @@
+Bonjour {{ nom }},
+
+Ceci est un email de démonstration de la plateforme BAMFA.
+
+L'équipe BAMFA
