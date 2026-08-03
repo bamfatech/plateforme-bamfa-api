@@ -1,3 +1,5 @@
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.validators import MaxValueValidator
 from rest_framework import serializers
 
@@ -68,3 +70,21 @@ class AlumniRegistrationCreateSerializer(serializers.ModelSerializer):
         if deja_membre or deja_demande:
             raise serializers.ValidationError(DOUBLON_MESSAGE)
         return email
+
+
+class InvitationVerifySerializer(serializers.Serializer):
+    token = serializers.CharField()
+
+
+class InvitationActivateSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    password = serializers.CharField(
+        write_only=True, style={"input_type": "password"}
+    )
+
+    def validate_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(list(exc.messages)) from exc
+        return value

@@ -138,6 +138,10 @@ CSRF_TRUSTED_ORIGINS = env.list(
     "CSRF_TRUSTED_ORIGINS", default=["http://localhost:3000"]
 )
 
+# Base d'URL du frontend, pour construire les liens envoyés par email
+# (activation d'accès alumni, et plus tard réinitialisation de mot de passe).
+FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default="http://localhost:3000")
+
 EMAIL_BACKEND = env(
     "EMAIL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
 )

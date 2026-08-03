@@ -1,4 +1,32 @@
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
+from django.core import signing
+from django.db import transaction
+
 from apps.common.tasks import send_templated_email_task
+
+from .models import AlumniProfile
+
+INVITATION_SALT = "alumni-invitation"
+INVITATION_MAX_AGE = 7 * 24 * 3600  # 7 jours
+ALUMNI_GROUP = "Alumni"
+
+
+class InvitationError(Exception):
+    """Base des erreurs d'invitation."""
+
+
+class InvitationInvalid(InvitationError):
+    pass
+
+
+class InvitationExpired(InvitationError):
+    pass
+
+
+class InvitationAlreadyUsed(InvitationError):
+    pass
 
 
 def acknowledge_registration(registration):
@@ -8,4 +36,80 @@ def acknowledge_registration(registration):
         "alumni_demande_recue",
         {"prenom": registration.first_name},
         registration.email,
+    )
+
+
+def build_invitation_token(profile):
+    return signing.dumps({"profile_id": profile.pk}, salt=INVITATION_SALT)
+
+
+def resolve_invitation_token(token):
+    """Renvoie le profil visé par un jeton d'invitation.
+
+    L'usage unique n'est pas stocké : il découle de l'invariante
+    `profile.user_id is None`. Une fois le compte créé, le jeton est inerte.
+    """
+    try:
+        data = signing.loads(token, salt=INVITATION_SALT, max_age=INVITATION_MAX_AGE)
+    except signing.SignatureExpired as exc:
+        raise InvitationExpired("Ce lien d'invitation a expiré.") from exc
+    except signing.BadSignature as exc:
+        raise InvitationInvalid("Ce lien d'invitation est invalide.") from exc
+
+    profile = AlumniProfile.objects.filter(pk=data.get("profile_id")).first()
+    if profile is None:
+        raise InvitationInvalid("Ce lien d'invitation est invalide.")
+    if profile.user_id is not None:
+        raise InvitationAlreadyUsed("Cet accès a déjà été activé.")
+    return profile
+
+
+@transaction.atomic
+def claim_invitation(profile, *, password):
+    """Crée le compte de connexion du profil, ou rattache un compte existant.
+
+    Renvoie `(user, created)`. Si un compte porte déjà cette adresse, il est
+    rattaché **sans** que son mot de passe soit modifié : l'invitation ne doit
+    jamais servir à réécrire les identifiants d'un compte en place.
+    """
+    if profile.user_id is not None:
+        raise InvitationAlreadyUsed("Cet accès a déjà été activé.")
+
+    User = get_user_model()
+    groupe = Group.objects.get(name=ALUMNI_GROUP)
+    existant = User.objects.filter(email=profile.email).first()
+
+    if existant is not None:
+        user, created = existant, False
+    else:
+        user = User.objects.create_user(
+            email=profile.email,
+            password=password,
+            first_name=profile.first_name,
+            last_name=profile.last_name,
+        )
+        created = True
+
+    user.groups.add(groupe)
+    profile.user = user
+    profile.save(update_fields=["user", "updated_at"])
+    return user, created
+
+
+def _invitation_url(profile):
+    base = settings.FRONTEND_BASE_URL.rstrip("/")
+    return f"{base}/alumni/activation?token={build_invitation_token(profile)}"
+
+
+def send_invitation(
+    profile,
+    *,
+    template="alumni_invitation",
+    subject="Activez votre accès à la plateforme BAMFA",
+):
+    send_templated_email_task.delay(
+        subject,
+        template,
+        {"prenom": profile.first_name, "lien": _invitation_url(profile)},
+        profile.email,
     )
