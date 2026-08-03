@@ -1,0 +1,11 @@
+Bonjour {{ prenom }},
+
+Nous avons bien reçu votre demande d'inscription à la Benin Association of
+the Mastercard Foundation Alumni (BAMFA).
+
+Notre équipe va l'examiner. Vous recevrez un e-mail dès qu'une décision
+sera prise.
+
+Merci de votre intérêt pour BAMFA.
+
+L'équipe BAMFA
