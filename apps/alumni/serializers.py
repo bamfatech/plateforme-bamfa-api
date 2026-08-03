@@ -228,3 +228,51 @@ class MemberDirectorySerializer(PublicDirectorySerializer):
             "linkedin_url",
         ]
         read_only_fields = fields
+
+
+class SelfProfileSerializer(serializers.ModelSerializer):
+    """Profil vu et édité par son titulaire.
+
+    `email`, `promotion`, `status` et `source` restent réservés à
+    l'administration : ce sont des données d'instruction, pas des préférences.
+    """
+
+    completeness = serializers.IntegerField(read_only=True)
+    sector_display = serializers.CharField(source="get_sector_display", read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = AlumniProfile
+        fields = [
+            "id",
+            "first_name",
+            "last_name",
+            "email",
+            "promotion",
+            "country",
+            "phone",
+            "city",
+            "university",
+            "mcf_program",
+            "sector",
+            "sector_display",
+            "current_position",
+            "organization",
+            "bio",
+            "linkedin_url",
+            "birth_date",
+            "gender",
+            "directory_consent",
+            "status",
+            "status_display",
+            "completeness",
+        ]
+        read_only_fields = [
+            "id",
+            "email",
+            "promotion",
+            "status",
+            "status_display",
+            "sector_display",
+            "completeness",
+        ]

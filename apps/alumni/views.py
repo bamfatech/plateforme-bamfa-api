@@ -4,8 +4,8 @@ from django.db import IntegrityError, transaction
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import AllowAny
+from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -25,6 +25,7 @@ from .serializers import (
     MemberDirectorySerializer,
     PublicDirectorySerializer,
     RejectSerializer,
+    SelfProfileSerializer,
 )
 
 
@@ -308,3 +309,23 @@ class AdminProfileViewSet(
             )
         services.send_invitation(profile)
         return self._repondre(profile)
+
+
+@extend_schema(tags=["alumni"])
+class SelfProfileView(generics.RetrieveUpdateAPIView):
+    """Profil du titulaire du compte.
+
+    Aucune permission de niveau objet : le périmètre est porté par le
+    queryset (`user=request.user`), donc aucun chemin de code ne permet
+    d'atteindre le profil d'un autre alumni.
+    """
+
+    serializer_class = SelfProfileSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ["get", "patch", "head", "options"]
+
+    def get_object(self):
+        profile = AlumniProfile.objects.filter(user=self.request.user).first()
+        if profile is None:
+            raise NotFound("Aucun profil alumni n'est rattaché à ce compte.")
+        return profile

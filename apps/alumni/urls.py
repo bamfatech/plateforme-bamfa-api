@@ -8,6 +8,7 @@ from .views import (
     InvitationActivateView,
     InvitationVerifyView,
     RegistrationCreateView,
+    SelfProfileView,
 )
 
 router = DefaultRouter()
@@ -33,5 +34,6 @@ urlpatterns = [
         InvitationActivateView.as_view(),
         name="alumni-invitation-activate",
     ),
+    path("moi/", SelfProfileView.as_view(), name="alumni-moi"),
     path("", include(router.urls)),
 ]
