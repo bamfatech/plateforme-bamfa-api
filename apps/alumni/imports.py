@@ -185,6 +185,20 @@ def import_alumni(rows, *, uploaded_by, strict=False, filename=""):
     Ne sait rien de CSV : `rows` est un itérable de `(numéro, dict)`. C'est ce
     découplage qui permettra à une future API Transition d'alimenter la même
     fonction sans la modifier.
+
+    Contrat des compteurs du rapport, selon le mode :
+
+    - **Mode par défaut** (`strict=False`) : chaque ligne lue se retrouve
+      dans exactement un compteur, donc
+      `rows_created + rows_updated + rows_skipped + rows_failed == rows_total`.
+    - **Mode strict** (`strict=True`) : au premier échec, la transaction est
+      annulée — `rows_created`, `rows_updated` et `rows_skipped` retombent
+      donc à zéro (les écritures, y compris celles des lignes valides
+      précédant l'échec, sont annulées). `rows_total` et `rows_failed`, eux,
+      ne sont *pas* remis à zéro : ils enregistrent ce qui a été lu jusqu'à
+      l'abandon inclus, pas le fichier entier — les lignes situées après la
+      ligne fautive ne sont jamais lues. L'égalité ci-dessus ne tient donc
+      plus en mode strict.
     """
     compteurs = {"total": 0, "created": 0, "updated": 0, "skipped": 0, "failed": 0}
     lignes_rapport = []

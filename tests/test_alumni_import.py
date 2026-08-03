@@ -243,6 +243,30 @@ def test_le_rapport_survit_a_l_annulation_du_mode_strict():
 
 
 @pytest.mark.django_db
+def test_en_mode_strict_rows_total_ne_couvre_que_les_lignes_lues_avant_l_abandon():
+    rapport = _importer(
+        f"{EN_TETE}\n"
+        "awa@example.org,Doe,Awa,2018\n"
+        "pas-un-email,Mensah,Kofi,2019\n"
+        "kofi@example.org,Mensah,Kofi,2019\n"
+        "aya@example.org,Toure,Aya,2020\n",
+        strict=True,
+    )
+
+    # La ligne fautive est la 2e ligne de données ; deux lignes valides la
+    # suivent dans le fichier mais ne sont jamais lues : l'abandon survient
+    # avant. rows_total (2) doit rester strictement inférieur au nombre de
+    # lignes de données du fichier (4), preuve qu'il compte les lignes
+    # *lues*, pas le fichier entier.
+    assert rapport.rows_total == 2
+    assert rapport.rows_failed == 1
+    assert rapport.rows_created == 0
+    assert rapport.rows_updated == 0
+    assert rapport.rows_skipped == 0
+    assert AlumniProfile.objects.count() == 0
+
+
+@pytest.mark.django_db
 def test_un_rapport_est_cree_meme_quand_le_fichier_ne_contient_aucune_ligne():
     rapport = _importer(f"{EN_TETE}\n")
 
