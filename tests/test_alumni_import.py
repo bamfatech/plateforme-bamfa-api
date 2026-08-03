@@ -175,6 +175,16 @@ def test_un_secteur_inconnu_est_refuse():
 
 
 @pytest.mark.django_db
+def test_un_genre_inconnu_est_refuse():
+    rapport = _importer(
+        f"{EN_TETE},genre\nawa@example.org,Doe,Awa,2018,extraterrestre\n"
+    )
+
+    assert rapport.rows_failed == 1
+    assert "genre" in rapport.errors.get().message.lower()
+
+
+@pytest.mark.django_db
 def test_une_date_de_naissance_mal_formee_est_refusee():
     rapport = _importer(
         f"{EN_TETE},date_naissance\nawa@example.org,Doe,Awa,2018,12/04/1995\n"
@@ -240,6 +250,50 @@ def test_le_rapport_survit_a_l_annulation_du_mode_strict():
 
     assert AlumniImport.objects.count() == 1
     assert AlumniImport.objects.get().errors.count() == 1
+
+
+@pytest.mark.django_db
+def test_une_valeur_trop_longue_echoue_seule_sans_bloquer_les_lignes_valides():
+    from apps.alumni.models import AlumniImport
+
+    ville_trop_longue = "A" * 300
+    rapport = _importer(
+        f"{EN_TETE},ville\n"
+        "awa@example.org,Doe,Awa,2018,Cotonou\n"
+        f"trop-long@example.org,Mensah,Kofi,2019,{ville_trop_longue}\n"
+        "kofi@example.org,Toure,Aya,2020,Porto-Novo\n"
+    )
+
+    assert rapport.rows_total == 3
+    assert rapport.rows_created == 2
+    assert rapport.rows_failed == 1
+    assert AlumniProfile.objects.count() == 2
+    assert AlumniProfile.objects.filter(email="awa@example.org").exists()
+    assert AlumniProfile.objects.filter(email="kofi@example.org").exists()
+    erreur = rapport.errors.get()
+    assert erreur.line_number == 3
+    assert "ville" in erreur.message.lower()
+    assert AlumniImport.objects.filter(pk=rapport.pk).exists()
+
+
+@pytest.mark.django_db
+def test_le_mode_strict_annule_tout_meme_pour_une_erreur_de_base_de_donnees():
+    from apps.alumni.models import AlumniImport
+
+    ville_trop_longue = "A" * 300
+    rapport = _importer(
+        f"{EN_TETE},ville\n"
+        "awa@example.org,Doe,Awa,2018,Cotonou\n"
+        f"trop-long@example.org,Mensah,Kofi,2019,{ville_trop_longue}\n"
+        "kofi@example.org,Toure,Aya,2020,Porto-Novo\n",
+        strict=True,
+    )
+
+    assert AlumniProfile.objects.count() == 0
+    assert rapport.rows_created == 0
+    assert rapport.rows_updated == 0
+    assert rapport.rows_failed == 1
+    assert AlumniImport.objects.filter(pk=rapport.pk).exists()
 
 
 @pytest.mark.django_db
