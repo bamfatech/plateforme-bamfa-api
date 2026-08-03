@@ -65,6 +65,8 @@ def test_la_secretaire_lit_mais_ne_modifie_pas():
         == 403
     )
     assert client.post(f"{LISTE}{profil.pk}/suspendre/").status_code == 403
+    assert client.post(f"{LISTE}{profil.pk}/reactiver/").status_code == 403
+    assert client.post(f"{LISTE}{profil.pk}/archiver/").status_code == 403
     assert client.post(f"{LISTE}{profil.pk}/inviter/").status_code == 403
 
 
@@ -80,7 +82,14 @@ def test_les_autres_roles_n_ont_aucun_acces(role):
 
 @pytest.mark.django_db
 def test_un_anonyme_est_refuse():
-    assert _client().get(LISTE).status_code in (401, 403)
+    profil = _profil()
+    client = _client()
+
+    assert client.get(LISTE).status_code in (401, 403)
+    assert client.post(f"{LISTE}{profil.pk}/suspendre/").status_code in (401, 403)
+    assert client.post(f"{LISTE}{profil.pk}/reactiver/").status_code in (401, 403)
+    assert client.post(f"{LISTE}{profil.pk}/archiver/").status_code in (401, 403)
+    assert client.post(f"{LISTE}{profil.pk}/inviter/").status_code in (401, 403)
 
 
 @pytest.mark.django_db
@@ -171,14 +180,34 @@ def test_la_reactivation_reactive_le_compte():
 
 
 @pytest.mark.django_db
+def test_la_reactivation_depuis_archive_reactive_le_compte():
+    """Le diagramme d'états autorise `archive -> actif` : à vérifier
+    séparément de la réactivation depuis `suspendu`."""
+    user = User.objects.create_user(email="awa@example.org", password="x")
+    user.is_active = False
+    user.save()
+    profil = _profil(user=user, status=AlumniProfile.Status.ARCHIVE)
+
+    _client("Administrateur").post(f"{LISTE}{profil.pk}/reactiver/")
+
+    profil.refresh_from_db()
+    user.refresh_from_db()
+    assert profil.status == AlumniProfile.Status.ACTIF
+    assert user.is_active is True
+
+
+@pytest.mark.django_db
 def test_l_archivage_masque_le_profil_et_conserve_les_donnees():
-    profil = _profil(directory_consent=True)
+    user = User.objects.create_user(email="awa@example.org", password="x")
+    profil = _profil(directory_consent=True, user=user)
 
     _client("Administrateur").post(f"{LISTE}{profil.pk}/archiver/")
 
     profil.refresh_from_db()
+    user.refresh_from_db()
     assert profil.status == AlumniProfile.Status.ARCHIVE
     assert profil.email == "awa@example.org"
+    assert user.is_active is False
     assert AlumniProfile.objects.in_directory().count() == 0
 
 
@@ -225,11 +254,19 @@ def test_filtre_a_un_compte():
 
 @pytest.mark.django_db
 def test_filtres_statut_consentement_promotion_et_recherche_email():
-    _profil(email="a@example.org", promotion=2018, directory_consent=True)
+    _profil(
+        email="a@example.org",
+        promotion=2018,
+        directory_consent=True,
+        sector="numerique",
+        country="Bénin",
+    )
     _profil(
         email="b@example.org",
         promotion=2020,
         status=AlumniProfile.Status.SUSPENDU,
+        sector="sante",
+        country="France",
     )
     client = _client("Administrateur")
 
@@ -237,3 +274,14 @@ def test_filtres_statut_consentement_promotion_et_recherche_email():
     assert client.get(LISTE, {"consentement": "true"}).data["count"] == 1
     assert client.get(LISTE, {"promotion": 2020}).data["count"] == 1
     assert client.get(LISTE, {"search": "b@example.org"}).data["count"] == 1
+    assert client.get(LISTE, {"secteur": "numerique"}).data["count"] == 1
+    assert (
+        client.get(LISTE, {"secteur": "numerique"}).data["results"][0]["email"]
+        == "a@example.org"
+    )
+    # `pays` est en `iexact` : une casse différente doit tout de même matcher.
+    assert client.get(LISTE, {"pays": "FRANCE"}).data["count"] == 1
+    assert (
+        client.get(LISTE, {"pays": "FRANCE"}).data["results"][0]["email"]
+        == "b@example.org"
+    )
