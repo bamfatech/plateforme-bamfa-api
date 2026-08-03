@@ -9,9 +9,11 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.accounts.roles import user_has_role
+
 from . import services
-from .filters import AlumniRegistrationFilter
-from .models import AlumniRegistration
+from .filters import AlumniRegistrationFilter, PublicDirectoryFilter
+from .models import AlumniProfile, AlumniRegistration
 from .permissions import CanReadAdminDirectory, CanReviewRegistrations
 from .serializers import (
     DOUBLON_MESSAGE,
@@ -20,6 +22,8 @@ from .serializers import (
     AlumniRegistrationCreateSerializer,
     InvitationActivateSerializer,
     InvitationVerifySerializer,
+    MemberDirectorySerializer,
+    PublicDirectorySerializer,
     RejectSerializer,
 )
 
@@ -197,3 +201,40 @@ class AdminRegistrationViewSet(viewsets.ReadOnlyModelViewSet):
             )
         registration.refresh_from_db()
         return Response(self.get_serializer(registration).data)
+
+
+# Rôles qui accèdent au niveau « connecté » de l'annuaire.
+DIRECTORY_ROLES = ("Alumni", "Secrétaire", "Administrateur")
+
+
+@extend_schema(tags=["alumni"])
+class DirectoryViewSet(viewsets.ReadOnlyModelViewSet):
+    """Annuaire des alumni.
+
+    Un seul URL, deux niveaux de champs : le sérialiseur est choisi selon le
+    rôle de l'appelant. La *présence* dans l'annuaire est portée par
+    `in_directory()` — statut actif et consentement — quel que soit le niveau.
+    """
+
+    permission_classes = [AllowAny]
+    filterset_class = PublicDirectoryFilter
+    search_fields = [
+        "first_name",
+        "last_name",
+        "organization",
+        "current_position",
+    ]
+    ordering_fields = ["last_name", "promotion"]
+    ordering = ["last_name", "first_name"]
+
+    def get_queryset(self):
+        return AlumniProfile.objects.in_directory()
+
+    def get_serializer_class(self):
+        user = self.request.user
+        if user.is_authenticated and (
+            user.is_superuser
+            or any(user_has_role(user, role) for role in DIRECTORY_ROLES)
+        ):
+            return MemberDirectorySerializer
+        return PublicDirectorySerializer

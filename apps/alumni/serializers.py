@@ -194,3 +194,37 @@ class AdminProfileSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+
+class PublicDirectorySerializer(serializers.ModelSerializer):
+    """Niveau public : ni e-mail, ni téléphone, ni champs enrichis."""
+
+    sector_display = serializers.CharField(source="get_sector_display", read_only=True)
+
+    class Meta:
+        model = AlumniProfile
+        fields = [
+            "id",
+            "first_name",
+            "last_name",
+            "promotion",
+            "sector",
+            "sector_display",
+            "country",
+            "current_position",
+            "organization",
+        ]
+        read_only_fields = fields
+
+
+class MemberDirectorySerializer(PublicDirectorySerializer):
+    """Niveau connecté : ajoute ville, biographie et LinkedIn. Toujours pas
+    d'e-mail ni de téléphone — ceux-là ne sortent jamais du back-office."""
+
+    class Meta(PublicDirectorySerializer.Meta):
+        fields = PublicDirectorySerializer.Meta.fields + [
+            "city",
+            "bio",
+            "linkedin_url",
+        ]
+        read_only_fields = fields

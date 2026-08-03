@@ -3,12 +3,14 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     AdminRegistrationViewSet,
+    DirectoryViewSet,
     InvitationActivateView,
     InvitationVerifyView,
     RegistrationCreateView,
 )
 
 router = DefaultRouter()
+router.register("annuaire", DirectoryViewSet, basename="alumni-annuaire")
 router.register(
     "admin/inscriptions", AdminRegistrationViewSet, basename="alumni-admin-inscription"
 )
