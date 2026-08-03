@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     "apps.common",
     "apps.accounts",
     "apps.payments",
+    "apps.alumni",
 ]
 
 MIDDLEWARE = [

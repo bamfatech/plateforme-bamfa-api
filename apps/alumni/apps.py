@@ -1,0 +1,7 @@
+from django.apps import AppConfig
+
+
+class AlumniConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "apps.alumni"
+    verbose_name = "Alumni"
