@@ -12,19 +12,24 @@ from .models import (
 DOUBLON_MESSAGE = "Une demande est déjà enregistrée pour cette adresse e-mail."
 
 
+def promotion_serializer_field():
+    """Champ `promotion` explicite, partagé par tous les sérialiseurs alumni.
+
+    `ModelSerializer` recopierait `MaxValueValidator.limit_value` — ici la
+    fonction `promotion_max` — dans `max_value`, que drf-spectacular lit sans
+    l'appeler : la génération du schéma OpenAPI planterait. En déclarant le
+    champ, `max_value` reste None et la borne reste portée par le validateur,
+    qui résout le callable à l'appel.
+    """
+    return serializers.IntegerField(
+        min_value=PROMOTION_MIN, validators=[MaxValueValidator(promotion_max)]
+    )
+
+
 class AlumniRegistrationCreateSerializer(serializers.ModelSerializer):
     """Soumission publique. Aucun champ d'instruction n'est exposé."""
 
-    # Déclaré explicitement : `PositiveSmallIntegerField.validators` contient un
-    # `MaxValueValidator` dont la borne est une fonction (`promotion_max`), pour
-    # rester juste au fil des années sans migration. `ModelSerializer` recopierait
-    # cette fonction telle quelle dans `IntegerField(max_value=...)`, ce que
-    # drf-spectacular ne sait pas introspecter (il attend un entier). Le champ
-    # explicite conserve la même borne dynamique, validée à l'exécution, sans
-    # exposer de valeur non résolue au générateur de schéma OpenAPI.
-    promotion = serializers.IntegerField(
-        min_value=PROMOTION_MIN, validators=[MaxValueValidator(promotion_max)]
-    )
+    promotion = promotion_serializer_field()
 
     class Meta:
         model = AlumniRegistration
