@@ -103,11 +103,17 @@ def test_un_anonyme_est_refuse(db):
 @pytest.mark.django_db
 def test_le_profil_d_autrui_est_inatteignable(alumni):
     """L'endpoint n'expose aucun identifiant : le périmètre est porté par le
-    queryset, filtré sur `user=request.user`."""
+    queryset, filtré sur `user=request.user`.
+
+    `autre` est nommé pour trier avant `profil` (« Aaronson » < « Doe » dans
+    l'ordre par défaut du modèle) : si le filtre `user=request.user` venait à
+    disparaître, `.first()` renverrait ce profil-ci en tête de liste, et le
+    test échouerait au lieu de passer silencieusement.
+    """
     client, profil = alumni
     autre = AlumniProfile.objects.create(
         first_name="Kofi",
-        last_name="Mensah",
+        last_name="Aaronson",
         email="kofi@example.org",
         promotion=2019,
     )
