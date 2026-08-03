@@ -72,11 +72,18 @@ def test_la_completude_progresse_avec_les_champs_remplis(alumni):
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "champ,valeur",
-    [("email", "autre@example.org"), ("promotion", 2000), ("status", "suspendu")],
+    [("email", "autre@example.org"), ("promotion", 2019), ("status", "suspendu")],
 )
 def test_les_champs_reserves_a_l_administration_ne_sont_pas_modifiables(
     alumni, champ, valeur
 ):
+    """`valeur` doit toujours être une valeur valide et distincte de celle du
+    profil de départ (`promotion=2018`) : avec `2000`, `MinValueValidator
+    (PROMOTION_MIN=2010)` rejetterait la requête en 400 même si `promotion`
+    sortait de `read_only_fields`, et le test ne distinguerait plus « protégé »
+    de « rejeté comme invalide ». `2019` est valide, donc seule la protection
+    en lecture seule peut expliquer que le profil ne change pas.
+    """
     client, profil = alumni
     avant = getattr(profil, champ)
 

@@ -272,7 +272,4 @@ class SelfProfileSerializer(serializers.ModelSerializer):
             "email",
             "promotion",
             "status",
-            "status_display",
-            "sector_display",
-            "completeness",
         ]
