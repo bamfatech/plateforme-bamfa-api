@@ -189,6 +189,36 @@ def approve_registration(registration, *, reviewer):
     return profile
 
 
+def _set_account_active(profile, actif):
+    if profile.user_id is None:
+        return
+    if profile.user.is_active != actif:
+        profile.user.is_active = actif
+        profile.user.save(update_fields=["is_active"])
+
+
+def _set_status(profile, status, *, account_active):
+    with transaction.atomic():
+        profile.status = status
+        profile.save(update_fields=["status", "updated_at"])
+        _set_account_active(profile, account_active)
+    return profile
+
+
+def suspend_profile(profile):
+    """Retire le membre de l'annuaire et bloque sa connexion."""
+    return _set_status(profile, AlumniProfile.Status.SUSPENDU, account_active=False)
+
+
+def reactivate_profile(profile):
+    return _set_status(profile, AlumniProfile.Status.ACTIF, account_active=True)
+
+
+def archive_profile(profile):
+    """Suppression logique : masque partout, conserve les données."""
+    return _set_status(profile, AlumniProfile.Status.ARCHIVE, account_active=False)
+
+
 def reject_registration(registration, *, reviewer, reason=""):
     """Rejette la demande sans rien créer. Même garantie de verrou que
     `approve_registration` : voir sa docstring."""

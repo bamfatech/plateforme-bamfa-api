@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    AdminProfileViewSet,
     AdminRegistrationViewSet,
     DirectoryViewSet,
     InvitationActivateView,
@@ -14,6 +15,7 @@ router.register("annuaire", DirectoryViewSet, basename="alumni-annuaire")
 router.register(
     "admin/inscriptions", AdminRegistrationViewSet, basename="alumni-admin-inscription"
 )
+router.register("admin/profils", AdminProfileViewSet, basename="alumni-admin-profil")
 
 urlpatterns = [
     path(

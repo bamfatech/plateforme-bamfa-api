@@ -2,7 +2,7 @@ from contextlib import contextmanager
 
 from django.db import IntegrityError, transaction
 from drf_spectacular.utils import extend_schema
-from rest_framework import generics, status, viewsets
+from rest_framework import generics, mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny
@@ -12,9 +12,9 @@ from rest_framework.views import APIView
 from apps.accounts.roles import user_has_role
 
 from . import services
-from .filters import AlumniRegistrationFilter, PublicDirectoryFilter
+from .filters import AdminProfileFilter, AlumniRegistrationFilter, PublicDirectoryFilter
 from .models import AlumniProfile, AlumniRegistration
-from .permissions import CanReadAdminDirectory, CanReviewRegistrations
+from .permissions import CanManageDirectory, CanReadAdminDirectory, CanReviewRegistrations
 from .serializers import (
     DOUBLON_MESSAGE,
     AdminProfileSerializer,
@@ -238,3 +238,73 @@ class DirectoryViewSet(viewsets.ReadOnlyModelViewSet):
         ):
             return MemberDirectorySerializer
         return PublicDirectorySerializer
+
+
+@extend_schema(tags=["alumni"])
+class AdminProfileViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Base alumni complète : tous les statuts, e-mails inclus.
+
+    Lecture ouverte à la Secrétaire ; modification et actes de gouvernance
+    réservés à l'Administrateur.
+    """
+
+    queryset = AlumniProfile.objects.select_related("user", "mandate")
+    serializer_class = AdminProfileSerializer
+    permission_classes = [CanReadAdminDirectory]
+    filterset_class = AdminProfileFilter
+    search_fields = [
+        "email",
+        "first_name",
+        "last_name",
+        "organization",
+        "current_position",
+    ]
+    ordering_fields = ["last_name", "promotion", "created_at"]
+    http_method_names = ["get", "patch", "post", "head", "options"]
+
+    ACTIONS_RESERVEES = (
+        "partial_update",
+        "suspendre",
+        "reactiver",
+        "archiver",
+        "inviter",
+    )
+
+    def get_permissions(self):
+        if self.action in self.ACTIONS_RESERVEES:
+            return [CanManageDirectory()]
+        return super().get_permissions()
+
+    def _repondre(self, profile):
+        return Response(self.get_serializer(profile).data)
+
+    @extend_schema(request=None, responses={200: AdminProfileSerializer})
+    @action(detail=True, methods=["post"], url_path="suspendre")
+    def suspendre(self, request, pk=None):
+        return self._repondre(services.suspend_profile(self.get_object()))
+
+    @extend_schema(request=None, responses={200: AdminProfileSerializer})
+    @action(detail=True, methods=["post"], url_path="reactiver")
+    def reactiver(self, request, pk=None):
+        return self._repondre(services.reactivate_profile(self.get_object()))
+
+    @extend_schema(request=None, responses={200: AdminProfileSerializer})
+    @action(detail=True, methods=["post"], url_path="archiver")
+    def archiver(self, request, pk=None):
+        return self._repondre(services.archive_profile(self.get_object()))
+
+    @extend_schema(request=None, responses={200: AdminProfileSerializer})
+    @action(detail=True, methods=["post"], url_path="inviter")
+    def inviter(self, request, pk=None):
+        profile = self.get_object()
+        if profile.user_id is not None:
+            raise ValidationError(
+                {"compte": ["Ce profil possède déjà un compte de connexion."]}
+            )
+        services.send_invitation(profile)
+        return self._repondre(profile)
