@@ -4,7 +4,9 @@ from django.contrib.auth.models import Group
 from rest_framework.test import APIClient
 
 from apps.accounts.roles import create_roles
+from apps.alumni import services
 from apps.alumni.models import AlumniProfile, AlumniRegistration
+from apps.alumni.views import AdminRegistrationViewSet
 
 User = get_user_model()
 LISTE = "/api/v1/alumni/admin/inscriptions/"
@@ -120,6 +122,53 @@ def test_une_demande_deja_instruite_ne_peut_pas_etre_reinstruite(demande):
 
     assert response.status_code == 400
     assert AlumniProfile.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_l_approbation_rejouee_leve_une_exception_sous_le_verrou(demande):
+    """Le contrôle qui fait foi est celui posé sous `select_for_update()`
+    dans le service, pas la vérification amicale de la vue : un second appel
+    du service sur la même demande (deux administrateurs, ou un double clic
+    ayant tous deux chargé la demande avant qu'aucun n'ait committé) doit
+    être bloqué même en repassant l'objet tel qu'il était avant le premier
+    appel.
+    """
+    admin = User.objects.create_user(email="admin@bamfa.org", password="x")
+
+    services.approve_registration(demande, reviewer=admin)
+
+    with pytest.raises(services.RegistrationAlreadyReviewed):
+        services.approve_registration(demande, reviewer=admin)
+
+    assert AlumniProfile.objects.count() == 1
+
+
+@pytest.mark.django_db
+def test_l_approbation_concurrente_renvoie_400_et_non_500(demande, monkeypatch):
+    """Neutralise le chemin rapide de la vue (`_en_attente_ou_400`) pour que
+    la requête atteigne directement le contrôle sous verrou du service, comme
+    le ferait une seconde requête concurrente arrivée après la première mais
+    avant qu'elle n'ait pu s'appuyer sur la vérification préalable. Ce qui
+    compte : la réponse doit être 400 (traduite), jamais une 500 provoquée par
+    une exception non traduite.
+    """
+    client = _client("Administrateur")
+    client.post(f"{LISTE}{demande.pk}/approuver/")
+
+    monkeypatch.setattr(
+        AdminRegistrationViewSet,
+        "_en_attente_ou_400",
+        lambda self: self.get_object(),
+    )
+
+    response = client.post(f"{LISTE}{demande.pk}/approuver/")
+
+    assert response.status_code == 400
+    assert response.data["error"]["details"]["statut"] == [
+        services.REGISTRATION_ALREADY_REVIEWED_MESSAGE
+    ]
+    assert AlumniProfile.objects.count() == 1
+    assert User.objects.filter(email="awa@example.org").count() == 0
 
 
 @pytest.mark.django_db

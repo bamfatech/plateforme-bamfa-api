@@ -125,6 +125,19 @@ class InvitationActivateView(APIView):
         )
 
 
+@contextmanager
+def _already_reviewed_as_400():
+    """Traduit en `ValidationError` DRF (400) le refus qui fait foi côté
+    service (`RegistrationAlreadyReviewed`, posé sous verrou). Même forme que
+    `_invitation_errors_as_400()` ci-dessus : point de traduction unique pour
+    les deux actions, plutôt qu'un `try/except` dupliqué dans chacune.
+    """
+    try:
+        yield
+    except services.RegistrationAlreadyReviewed as exc:
+        raise ValidationError({"statut": [str(exc)]}) from exc
+
+
 @extend_schema(tags=["alumni"])
 class AdminRegistrationViewSet(viewsets.ReadOnlyModelViewSet):
     """File d'attente des demandes d'inscription.
@@ -145,10 +158,16 @@ class AdminRegistrationViewSet(viewsets.ReadOnlyModelViewSet):
         return super().get_permissions()
 
     def _en_attente_ou_400(self):
+        """Chemin rapide et amical : évite un aller-retour service + verrou
+        quand le statut est visiblement déjà tranché. Ce n'est qu'un confort
+        — la garantie d'unicité de l'instruction est posée par le service
+        sous `select_for_update()` (voir `services.approve_registration`),
+        pas ici : la correction ne dépend pas de cet appel préalable.
+        """
         registration = self.get_object()
         if registration.status != AlumniRegistration.Status.EN_ATTENTE:
             raise ValidationError(
-                {"statut": ["Cette demande a déjà été instruite."]}
+                {"statut": [services.REGISTRATION_ALREADY_REVIEWED_MESSAGE]}
             )
         return registration
 
@@ -156,7 +175,10 @@ class AdminRegistrationViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=["post"], url_path="approuver")
     def approuver(self, request, pk=None):
         registration = self._en_attente_ou_400()
-        profile = services.approve_registration(registration, reviewer=request.user)
+        with _already_reviewed_as_400():
+            profile = services.approve_registration(
+                registration, reviewer=request.user
+            )
         return Response(AdminProfileSerializer(profile).data)
 
     @extend_schema(
@@ -167,10 +189,11 @@ class AdminRegistrationViewSet(viewsets.ReadOnlyModelViewSet):
         registration = self._en_attente_ou_400()
         serializer = RejectSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        services.reject_registration(
-            registration,
-            reviewer=request.user,
-            reason=serializer.validated_data["motif"],
-        )
+        with _already_reviewed_as_400():
+            services.reject_registration(
+                registration,
+                reviewer=request.user,
+                reason=serializer.validated_data["motif"],
+            )
         registration.refresh_from_db()
         return Response(self.get_serializer(registration).data)

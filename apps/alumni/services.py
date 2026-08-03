@@ -137,14 +137,38 @@ PROFILE_COPY_FIELDS = (
     "directory_consent",
 )
 
+REGISTRATION_ALREADY_REVIEWED_MESSAGE = "Cette demande a déjà été instruite."
+
+
+class RegistrationAlreadyReviewed(Exception):
+    """La demande n'est plus « en attente » au moment du verrou.
+
+    Le contrôle de statut fait côté vue (`_en_attente_ou_400`) est une
+    vérification amicale, pas la garantie : deux appels quasi simultanés
+    (deux administrateurs, ou un double clic) peuvent tous deux la franchir
+    avant qu'aucun n'ait committé. Cette exception porte le refus qui fait
+    foi, posé sous `select_for_update()`.
+    """
+
 
 def approve_registration(registration, *, reviewer):
     """Crée le membre depuis la demande, puis envoie le lien d'invitation.
 
     L'email part **après** le commit : une transaction annulée ne doit pas
     laisser filer une invitation vers un profil qui n'existe pas.
+
+    Re-lit et verrouille la demande (`select_for_update`) avant de rejouer le
+    contrôle de statut : c'est ce verrou, et non la vérification faite par la
+    vue avant l'appel, qui garantit qu'une même demande ne peut être
+    approuvée deux fois.
     """
     with transaction.atomic():
+        registration = AlumniRegistration.objects.select_for_update().get(
+            pk=registration.pk
+        )
+        if registration.status != AlumniRegistration.Status.EN_ATTENTE:
+            raise RegistrationAlreadyReviewed(REGISTRATION_ALREADY_REVIEWED_MESSAGE)
+
         profile = AlumniProfile.objects.create(
             source=AlumniProfile.Source.INSCRIPTION,
             **{champ: getattr(registration, champ) for champ in PROFILE_COPY_FIELDS},
@@ -166,7 +190,15 @@ def approve_registration(registration, *, reviewer):
 
 
 def reject_registration(registration, *, reviewer, reason=""):
+    """Rejette la demande sans rien créer. Même garantie de verrou que
+    `approve_registration` : voir sa docstring."""
     with transaction.atomic():
+        registration = AlumniRegistration.objects.select_for_update().get(
+            pk=registration.pk
+        )
+        if registration.status != AlumniRegistration.Status.EN_ATTENTE:
+            raise RegistrationAlreadyReviewed(REGISTRATION_ALREADY_REVIEWED_MESSAGE)
+
         registration.status = AlumniRegistration.Status.REJETEE
         registration.reviewed_by = reviewer
         registration.reviewed_at = timezone.now()
