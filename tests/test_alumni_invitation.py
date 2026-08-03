@@ -116,6 +116,12 @@ def test_endpoint_activer_cree_le_compte(profil):
 
 
 def test_endpoint_activer_refuse_un_rejeu(profil):
+    """Rejeu séquentiel : à la deuxième requête, le profil porte déjà un
+    compte en base, donc c'est `resolve_invitation_token` qui détecte le
+    rejeu (avant même d'appeler `claim_invitation`). Voir
+    `test_claim_invitation_rejoue_sur_le_meme_profil_leve_deja_active` et
+    `test_endpoint_activer_traduit_le_rejeu_detecte_par_claim_invitation`
+    pour le garde-fou de `claim_invitation` lui-même."""
     jeton = build_invitation_token(profil)
     client = APIClient()
     client.post(ACTIVER, {"token": jeton, "password": MOT_DE_PASSE}, format="json")
@@ -126,6 +132,44 @@ def test_endpoint_activer_refuse_un_rejeu(profil):
 
     assert response.status_code == 400
     assert "déjà" in str(response.data["error"]["details"]).lower()
+    assert User.objects.filter(email=profil.email).count() == 1
+
+
+def test_endpoint_activer_traduit_le_rejeu_detecte_par_claim_invitation(
+    profil, monkeypatch
+):
+    """Simule la fenêtre de course où deux requêtes concurrentes franchissent
+    toutes deux `resolve_invitation_token` avant qu'aucune n'ait acquis le
+    compte : c'est alors `claim_invitation` qui détecte le rejeu. Sans
+    traduction de son exception dans la vue, ce cas remonterait en 500 au
+    lieu d'un 400 propre — exactement le bogue relevé en revue."""
+    jeton = build_invitation_token(profil)
+    profile_id = profil.pk
+    monkeypatch.setattr(
+        "apps.alumni.services.resolve_invitation_token",
+        lambda token: AlumniProfile.objects.get(pk=profile_id),
+    )
+
+    client = APIClient()
+    client.post(ACTIVER, {"token": jeton, "password": MOT_DE_PASSE}, format="json")
+
+    response = client.post(
+        ACTIVER, {"token": jeton, "password": MOT_DE_PASSE}, format="json"
+    )
+
+    assert response.status_code == 400
+    assert "déjà" in str(response.data["error"]["details"]).lower()
+    assert User.objects.filter(email=profil.email).count() == 1
+
+
+def test_claim_invitation_rejoue_sur_le_meme_profil_leve_deja_active(profil):
+    """Garde-fou propre à `claim_invitation`, indépendant de
+    `resolve_invitation_token` : un deuxième appel sur le même profil déjà
+    rattaché doit lever `InvitationAlreadyUsed`, pas créer un second compte."""
+    claim_invitation(profil, password=MOT_DE_PASSE)
+
+    with pytest.raises(InvitationAlreadyUsed):
+        claim_invitation(profil, password=MOT_DE_PASSE)
 
 
 def test_endpoint_activer_applique_les_validateurs_de_mot_de_passe(profil):

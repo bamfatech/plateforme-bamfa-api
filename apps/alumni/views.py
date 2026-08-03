@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 from django.db import IntegrityError, transaction
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
@@ -13,7 +15,6 @@ from .serializers import (
     InvitationActivateSerializer,
     InvitationVerifySerializer,
 )
-from .services import InvitationError
 
 
 @extend_schema(tags=["alumni"])
@@ -46,10 +47,19 @@ class RegistrationCreateView(generics.CreateAPIView):
         services.acknowledge_registration(registration)
 
 
-def _resolve_or_400(token):
+@contextmanager
+def _invitation_errors_as_400():
+    """Traduit en `ValidationError` DRF (400) toute `InvitationError` levée par
+    le service — que ce soit à la résolution du jeton ou à la création du
+    compte. Point unique de traduction pour les deux vues : un jeton rejoué
+    en cas de double clic doit échouer proprement, qu'il soit intercepté par
+    `resolve_invitation_token` (jeton déjà consommé en base) ou par
+    `claim_invitation` (fenêtre de course où les deux requêtes ont franchi la
+    résolution avant qu'aucune n'ait acquis le compte).
+    """
     try:
-        return services.resolve_invitation_token(token)
-    except InvitationError as exc:
+        yield
+    except services.InvitationError as exc:
         raise ValidationError({"token": [str(exc)]}) from exc
 
 
@@ -67,7 +77,10 @@ class InvitationVerifyView(APIView):
     def post(self, request):
         serializer = InvitationVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        profile = _resolve_or_400(serializer.validated_data["token"])
+        with _invitation_errors_as_400():
+            profile = services.resolve_invitation_token(
+                serializer.validated_data["token"]
+            )
         return Response({"first_name": profile.first_name, "email": profile.email})
 
 
@@ -85,10 +98,13 @@ class InvitationActivateView(APIView):
     def post(self, request):
         serializer = InvitationActivateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        profile = _resolve_or_400(serializer.validated_data["token"])
-        _user, created = services.claim_invitation(
-            profile, password=serializer.validated_data["password"]
-        )
+        with _invitation_errors_as_400():
+            profile = services.resolve_invitation_token(
+                serializer.validated_data["token"]
+            )
+            _user, created = services.claim_invitation(
+                profile, password=serializer.validated_data["password"]
+            )
         message = (
             "Votre accès est activé. Vous pouvez maintenant vous connecter."
             if created
