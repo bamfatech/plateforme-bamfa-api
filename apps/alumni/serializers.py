@@ -88,3 +88,109 @@ class InvitationActivateSerializer(serializers.Serializer):
         except DjangoValidationError as exc:
             raise serializers.ValidationError(list(exc.messages)) from exc
         return value
+
+
+class AlumniRegistrationAdminSerializer(serializers.ModelSerializer):
+    """Lecture d'une demande dans le back-office."""
+
+    reviewed_by_email = serializers.EmailField(
+        source="reviewed_by.email", read_only=True, default=None
+    )
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    sector_display = serializers.CharField(source="get_sector_display", read_only=True)
+
+    class Meta:
+        model = AlumniRegistration
+        fields = [
+            "id",
+            "first_name",
+            "last_name",
+            "email",
+            "promotion",
+            "country",
+            "phone",
+            "city",
+            "university",
+            "mcf_program",
+            "sector",
+            "sector_display",
+            "current_position",
+            "organization",
+            "bio",
+            "linkedin_url",
+            "birth_date",
+            "gender",
+            "directory_consent",
+            "status",
+            "status_display",
+            "submitted_at",
+            "reviewed_at",
+            "reviewed_by_email",
+            "rejection_reason",
+            "profile",
+        ]
+        read_only_fields = fields
+
+
+class RejectSerializer(serializers.Serializer):
+    motif = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class AdminProfileSerializer(serializers.ModelSerializer):
+    """Niveau administration : tous les champs, e-mail et téléphone inclus."""
+
+    # `promotion` est modifiable ici : le helper partagé est obligatoire, sans
+    # quoi la génération du schéma OpenAPI plante (voir Contraintes globales).
+    promotion = promotion_serializer_field()
+    completeness = serializers.IntegerField(read_only=True)
+    has_account = serializers.BooleanField(read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    sector_display = serializers.CharField(source="get_sector_display", read_only=True)
+    user_email = serializers.EmailField(
+        source="user.email", read_only=True, default=None
+    )
+
+    class Meta:
+        model = AlumniProfile
+        fields = [
+            "id",
+            "first_name",
+            "last_name",
+            "email",
+            "promotion",
+            "country",
+            "phone",
+            "city",
+            "university",
+            "mcf_program",
+            "sector",
+            "sector_display",
+            "current_position",
+            "organization",
+            "bio",
+            "linkedin_url",
+            "birth_date",
+            "gender",
+            "directory_consent",
+            "status",
+            "status_display",
+            "source",
+            "mandate",
+            "completeness",
+            "has_account",
+            "user_email",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "status",
+            "status_display",
+            "source",
+            "sector_display",
+            "completeness",
+            "has_account",
+            "user_email",
+            "created_at",
+            "updated_at",
+        ]

@@ -1,0 +1,14 @@
+Bonjour {{ prenom }},
+
+Bonne nouvelle : votre demande d'inscription à BAMFA est approuvée.
+Bienvenue dans la communauté des alumni de la Mastercard Foundation au Bénin.
+
+Pour accéder à la plateforme, définissez votre mot de passe en suivant ce
+lien, valable 7 jours :
+
+{{ lien }}
+
+Vous pourrez ensuite compléter votre profil et choisir de figurer ou non
+dans l'annuaire public.
+
+L'équipe BAMFA

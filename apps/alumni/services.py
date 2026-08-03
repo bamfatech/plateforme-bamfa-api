@@ -3,10 +3,11 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core import signing
 from django.db import transaction
+from django.utils import timezone
 
 from apps.common.tasks import send_templated_email_task
 
-from .models import AlumniProfile
+from .models import AlumniProfile, AlumniRegistration
 
 INVITATION_SALT = "alumni-invitation"
 INVITATION_MAX_AGE = 7 * 24 * 3600  # 7 jours
@@ -113,3 +114,76 @@ def send_invitation(
         {"prenom": profile.first_name, "lien": _invitation_url(profile)},
         profile.email,
     )
+
+
+# Champs recopiés de la demande vers le profil à l'approbation.
+PROFILE_COPY_FIELDS = (
+    "first_name",
+    "last_name",
+    "email",
+    "promotion",
+    "country",
+    "phone",
+    "city",
+    "university",
+    "mcf_program",
+    "sector",
+    "current_position",
+    "organization",
+    "bio",
+    "linkedin_url",
+    "birth_date",
+    "gender",
+    "directory_consent",
+)
+
+
+def approve_registration(registration, *, reviewer):
+    """Crée le membre depuis la demande, puis envoie le lien d'invitation.
+
+    L'email part **après** le commit : une transaction annulée ne doit pas
+    laisser filer une invitation vers un profil qui n'existe pas.
+    """
+    with transaction.atomic():
+        profile = AlumniProfile.objects.create(
+            source=AlumniProfile.Source.INSCRIPTION,
+            **{champ: getattr(registration, champ) for champ in PROFILE_COPY_FIELDS},
+        )
+        registration.status = AlumniRegistration.Status.APPROUVEE
+        registration.reviewed_by = reviewer
+        registration.reviewed_at = timezone.now()
+        registration.profile = profile
+        registration.save(
+            update_fields=["status", "reviewed_by", "reviewed_at", "profile"]
+        )
+
+    send_invitation(
+        profile,
+        template="alumni_demande_approuvee",
+        subject="Votre inscription à BAMFA est approuvée",
+    )
+    return profile
+
+
+def reject_registration(registration, *, reviewer, reason=""):
+    with transaction.atomic():
+        registration.status = AlumniRegistration.Status.REJETEE
+        registration.reviewed_by = reviewer
+        registration.reviewed_at = timezone.now()
+        registration.rejection_reason = reason or ""
+        registration.save(
+            update_fields=[
+                "status",
+                "reviewed_by",
+                "reviewed_at",
+                "rejection_reason",
+            ]
+        )
+
+    send_templated_email_task.delay(
+        "Votre demande d'inscription à BAMFA",
+        "alumni_demande_rejetee",
+        {"prenom": registration.first_name, "motif": registration.rejection_reason},
+        registration.email,
+    )
+    return registration

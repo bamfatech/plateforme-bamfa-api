@@ -1,0 +1,12 @@
+Bonjour {{ prenom }},
+
+Après examen, votre demande d'inscription à BAMFA n'a pas été retenue.
+{% if motif %}
+Motif communiqué par l'équipe :
+
+{{ motif }}
+{% endif %}
+Si vous pensez qu'il s'agit d'une erreur, vous pouvez nous écrire via le
+formulaire de contact du site.
+
+L'équipe BAMFA

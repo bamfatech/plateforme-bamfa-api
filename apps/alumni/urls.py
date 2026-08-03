@@ -1,9 +1,16 @@
-from django.urls import path
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
 
 from .views import (
+    AdminRegistrationViewSet,
     InvitationActivateView,
     InvitationVerifyView,
     RegistrationCreateView,
+)
+
+router = DefaultRouter()
+router.register(
+    "admin/inscriptions", AdminRegistrationViewSet, basename="alumni-admin-inscription"
 )
 
 urlpatterns = [
@@ -22,4 +29,5 @@ urlpatterns = [
         InvitationActivateView.as_view(),
         name="alumni-invitation-activate",
     ),
+    path("", include(router.urls)),
 ]
