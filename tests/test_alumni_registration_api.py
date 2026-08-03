@@ -1,7 +1,8 @@
 import pytest
 from rest_framework.test import APIClient
 
-from apps.alumni.models import AlumniProfile, AlumniRegistration
+from apps.alumni.models import AlumniProfile, AlumniRegistration, normalize_email, promotion_max
+from apps.alumni.serializers import DOUBLON_MESSAGE, AlumniRegistrationCreateSerializer
 
 URL = "/api/v1/alumni/inscriptions/"
 
@@ -57,6 +58,16 @@ def test_les_champs_obligatoires_sont_exiges(champ):
 @pytest.mark.django_db
 def test_une_promotion_hors_bornes_est_refusee():
     response = APIClient().post(URL, {**CHARGE, "promotion": 1990}, format="json")
+
+    assert response.status_code == 400
+    assert "promotion" in response.data["error"]["details"]
+
+
+@pytest.mark.django_db
+def test_une_promotion_superieure_a_la_borne_haute_est_refusee():
+    response = APIClient().post(
+        URL, {**CHARGE, "promotion": promotion_max() + 1}, format="json"
+    )
 
     assert response.status_code == 400
     assert "promotion" in response.data["error"]["details"]
@@ -121,3 +132,32 @@ def test_le_statut_n_est_pas_pilotable_par_le_client():
         AlumniRegistration.objects.get().status
         == AlumniRegistration.Status.EN_ATTENTE
     )
+
+
+@pytest.mark.django_db
+def test_un_doublon_concurrent_est_refuse_par_le_meme_message_neutre(
+    monkeypatch, mailoutbox
+):
+    """Deux soumissions quasi simultanées (double clic, retry sur timeout)
+    peuvent toutes deux franchir la vérification applicative de
+    `validate_email` avant qu'aucune n'ait été enregistrée. On neutralise
+    cette vérification pour de bon (et pas seulement le temps d'une requête)
+    afin de forcer la contrainte d'unicité en base à faire foi pour la
+    seconde soumission : le message renvoyé doit rester identique au cas
+    séquentiel, pour ne rien révéler de la concurrence.
+    """
+    monkeypatch.setattr(
+        AlumniRegistrationCreateSerializer,
+        "validate_email",
+        lambda self, value: normalize_email(value),
+    )
+    client = APIClient()
+    premiere = client.post(URL, CHARGE, format="json")
+    assert premiere.status_code == 201
+
+    response = client.post(URL, CHARGE, format="json")
+
+    assert response.status_code == 400
+    assert response.data["error"]["details"]["email"] == [DOUBLON_MESSAGE]
+    assert AlumniRegistration.objects.count() == 1
+    assert len(mailoutbox) == 1
