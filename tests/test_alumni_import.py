@@ -1,9 +1,10 @@
 import io
 
 import pytest
+from django.db import DatabaseError
 
 from apps.alumni.imports import ImportFormatError, import_alumni, parse_csv
-from apps.alumni.models import AlumniProfile
+from apps.alumni.models import AlumniImportError, AlumniProfile
 
 EN_TETE = "email,nom,prenom,promotion"
 
@@ -37,6 +38,20 @@ def test_une_colonne_requise_absente_leve_une_erreur_de_format():
 def test_un_fichier_vide_leve_une_erreur_de_format():
     with pytest.raises(ImportFormatError):
         parse_csv(_fichier(""))
+
+
+def test_une_cellule_depassant_la_limite_de_champ_leve_une_erreur_de_format():
+    """I3 : `csv.DictReader` lève `csv.Error` à la *lecture* d'une ligne, pas
+    seulement à la détection du séparateur — un cas qui échappait à la
+    traduction en `ImportFormatError` tant que le `try` ne couvrait que le
+    `Sniffer`."""
+    valeur_enorme = "x" * 140_000  # > csv.field_size_limit() (131072 par défaut)
+    contenu = f"{EN_TETE},bio\nawa@example.org,Doe,Awa,2018,{valeur_enorme}\n"
+
+    with pytest.raises(ImportFormatError) as exc:
+        parse_csv(_fichier(contenu))
+
+    assert "illisible" in str(exc.value).lower()
 
 
 def test_le_separateur_point_virgule_est_accepte():
@@ -326,3 +341,86 @@ def test_un_rapport_est_cree_meme_quand_le_fichier_ne_contient_aucune_ligne():
 
     assert rapport.rows_total == 0
     assert rapport.pk is not None
+
+
+@pytest.mark.django_db
+def test_un_octet_nul_dans_une_cellule_est_assaini_sans_erreur():
+    """I4 : un octet NUL dans une valeur ne doit jamais atteindre `raw_row`
+    (`jsonb` Postgres le refuse) — assaini à la frontière, dans `parse_csv`,
+    pas traité comme un cas d'erreur à l'écriture du rapport."""
+    rapport = _importer(
+        f"{EN_TETE},bio\nawa@example.org,Doe,Awa,2018,bio\x00avecnul\n"
+    )
+
+    assert rapport.rows_created == 1
+    profil = AlumniProfile.objects.get()
+    assert "\x00" not in profil.bio
+    assert profil.bio == "bioavecnul"
+
+
+@pytest.mark.django_db
+def test_un_octet_nul_dans_une_ligne_en_echec_n_empeche_pas_le_rapport():
+    """Scénario exact de la revue : une ligne valide, puis une ligne qui
+    échoue (e-mail invalide) et dont une autre colonne porte un octet NUL —
+    consigné dans `raw_row`, ce qui faisait échouer le `bulk_create` du
+    rapport *après* que la ligne valide avait déjà été committée."""
+    rapport = _importer(
+        f"{EN_TETE},bio\n"
+        "awa@example.org,Doe,Awa,2018,ras\n"
+        "pas-un-email,Mensah,Kofi,2019,bio\x00avecnul\n"
+    )
+
+    assert rapport.pk is not None
+    assert rapport.rows_total == 2
+    assert rapport.rows_created == 1
+    assert rapport.rows_failed == 1
+    erreur = rapport.errors.get()
+    assert "\x00" not in erreur.raw_row.get("bio", "")
+
+
+@pytest.mark.django_db
+def test_une_erreur_de_base_de_donnees_a_l_enregistrement_ne_montre_pas_de_texte_brut(
+    monkeypatch,
+):
+    """Blocking minor #7 : le filet `DatabaseError` de `_enregistrer` ne doit
+    jamais interpoler le texte brut de l'exception (anglais, fragments de
+    requête SQL) dans le message lu par l'administrateur."""
+
+    def _save_qui_echoue(self, *args, **kwargs):
+        raise DatabaseError("colonne trop longue : fragment SQL sensible")
+
+    monkeypatch.setattr(AlumniProfile, "save", _save_qui_echoue)
+
+    rapport = _importer(f"{EN_TETE}\nawa@example.org,Doe,Awa,2018\n")
+
+    assert rapport.rows_failed == 1
+    message = rapport.errors.get().message
+    assert message == "Cette ligne n'a pas pu être enregistrée."
+    assert "fragment SQL sensible" not in message
+
+
+@pytest.mark.django_db
+def test_l_ecriture_du_rapport_ne_bloque_pas_meme_si_les_lignes_du_rapport_echouent(
+    monkeypatch,
+):
+    """I4 (filet) : si l'écriture des lignes du rapport échoue malgré tout
+    (`bulk_create`), le `finally` qui garantit la trace de la tentative ne
+    doit jamais lui-même faire échouer la requête : repli sur `raw_row={}`."""
+    original_bulk_create = AlumniImportError.objects.bulk_create
+    appels = {"n": 0}
+
+    def _bulk_create_qui_echoue_une_fois(objs, *args, **kwargs):
+        appels["n"] += 1
+        if appels["n"] == 1:
+            raise DatabaseError("simulation d'échec d'écriture du rapport")
+        return original_bulk_create(objs, *args, **kwargs)
+
+    monkeypatch.setattr(
+        AlumniImportError.objects, "bulk_create", _bulk_create_qui_echoue_une_fois
+    )
+
+    rapport = _importer(f"{EN_TETE}\npas-un-email,Mensah,Kofi,2019\n")
+
+    assert rapport.pk is not None
+    assert rapport.errors.count() == 1
+    assert rapport.errors.get().raw_row == {}

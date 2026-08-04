@@ -1,5 +1,6 @@
 import csv
 import io
+import logging
 import re
 import unicodedata
 from datetime import date
@@ -18,6 +19,8 @@ from .models import (
     normalize_email,
     promotion_max,
 )
+
+logger = logging.getLogger(__name__)
 
 REQUIRED_COLUMNS = ("email", "nom", "prenom", "promotion")
 
@@ -68,44 +71,71 @@ def normalize_header(name):
     return re.sub(r"\s+", "_", texte)
 
 
+def _nettoyer_valeur_brute(valeur):
+    """Assainit une valeur de cellule à la frontière du pipeline.
+
+    L'octet NUL (`\\x00`) est un caractère JSON valide mais que le type
+    `jsonb` de PostgreSQL refuse (« unsupported Unicode escape sequence ») :
+    laissé passer, il ne casse rien à l'import lui-même, mais fait échouer
+    l'écriture de `raw_row` sur `AlumniImportError` — potentiellement bien
+    après que les lignes valides ont été committées (voir I4 de la revue
+    finale). Il est retiré ici, avant que la valeur n'entre dans le pipeline,
+    plutôt que d'être traité comme un cas d'erreur à l'écriture du rapport.
+    """
+    return (valeur or "").replace("\x00", "").strip()
+
+
 def parse_csv(uploaded_file):
     """Adaptateur CSV → lignes normalisées `[(numéro_de_ligne, dict), ...]`.
 
     Renvoie une liste et non un générateur : les en-têtes sont ainsi validés
     **avant** que le cœur d'import n'écrive quoi que ce soit.
+
+    Tout le corps est couvert par le `except csv.Error` du bas : le module
+    `csv` peut lever cette exception aussi bien à la détection du séparateur
+    (repli géré localement juste en dessous) qu'à la **lecture** d'une ligne
+    par `DictReader` (ex. une cellule dépassant la limite de champ du
+    module) — un cas qui échappait à la traduction en `ImportFormatError`
+    tant que le `try` ne couvrait que le `Sniffer` (voir I3 de la revue
+    finale).
     """
     brut = uploaded_file.read()
     texte = brut.decode("utf-8-sig") if isinstance(brut, bytes) else brut
 
     try:
-        delimiteur = csv.Sniffer().sniff(texte[:4096], delimiters=",;").delimiter
-    except csv.Error:
-        delimiteur = ","
+        try:
+            delimiteur = csv.Sniffer().sniff(texte[:4096], delimiters=",;").delimiter
+        except csv.Error:
+            delimiteur = ","
 
-    lecteur = csv.DictReader(io.StringIO(texte), delimiter=delimiteur)
-    if not lecteur.fieldnames:
-        raise ImportFormatError("Le fichier est vide ou n'a pas d'en-tête.")
+        lecteur = csv.DictReader(io.StringIO(texte), delimiter=delimiteur)
+        if not lecteur.fieldnames:
+            raise ImportFormatError("Le fichier est vide ou n'a pas d'en-tête.")
 
-    en_tetes = [normalize_header(nom) for nom in lecteur.fieldnames]
-    manquantes = [col for col in REQUIRED_COLUMNS if col not in en_tetes]
-    if manquantes:
-        raise ImportFormatError(
-            "Colonnes requises absentes : " + ", ".join(manquantes) + "."
-        )
-
-    lignes = []
-    for numero, ligne in enumerate(lecteur, start=2):
-        lignes.append(
-            (
-                numero,
-                {
-                    normalize_header(cle): (valeur or "").strip()
-                    for cle, valeur in ligne.items()
-                    if cle is not None
-                },
+        en_tetes = [normalize_header(nom) for nom in lecteur.fieldnames]
+        manquantes = [col for col in REQUIRED_COLUMNS if col not in en_tetes]
+        if manquantes:
+            raise ImportFormatError(
+                "Colonnes requises absentes : " + ", ".join(manquantes) + "."
             )
-        )
-    return lignes
+
+        lignes = []
+        for numero, ligne in enumerate(lecteur, start=2):
+            lignes.append(
+                (
+                    numero,
+                    {
+                        normalize_header(cle): _nettoyer_valeur_brute(valeur)
+                        for cle, valeur in ligne.items()
+                        if cle is not None
+                    },
+                )
+            )
+        return lignes
+    except csv.Error as exc:
+        raise ImportFormatError(
+            "Le fichier CSV est illisible (ligne trop longue ou mal formée)."
+        ) from exc
 
 
 def _valeur_optionnelle(champ, brut):
@@ -197,9 +227,14 @@ def _enregistrer(instance):
     except ValidationError as exc:
         raise ValueError(_message_erreur_validation(exc)) from exc
     except DatabaseError as exc:
-        raise ValueError(
-            f"Échec d'enregistrement en base pour cette ligne : {exc}"
-        ) from exc
+        # Le texte brut de Postgres (anglais, fragments de requête SQL, noms
+        # de colonnes) ne doit jamais atteindre le rapport lu par
+        # l'administrateur — le produit est en français partout. Le détail
+        # technique va au journal serveur, pas à la ligne du rapport.
+        logger.exception(
+            "Échec d'enregistrement en base pour une ligne d'import alumni."
+        )
+        raise ValueError("Cette ligne n'a pas pu être enregistrée.") from exc
 
 
 def _appliquer(valeurs, compteurs):
@@ -317,15 +352,40 @@ def import_alumni(rows, *, uploaded_by, strict=False, filename=""):
             rows_skipped=compteurs["skipped"],
             rows_failed=compteurs["failed"],
         )
-        AlumniImportError.objects.bulk_create(
-            [
-                AlumniImportError(
-                    import_run=rapport,
-                    line_number=numero,
-                    raw_row=ligne,
-                    message=message,
-                )
-                for numero, ligne, message in lignes_rapport
-            ]
-        )
+        try:
+            AlumniImportError.objects.bulk_create(
+                [
+                    AlumniImportError(
+                        import_run=rapport,
+                        line_number=numero,
+                        raw_row=ligne,
+                        message=message,
+                    )
+                    for numero, ligne, message in lignes_rapport
+                ]
+            )
+        except DatabaseError:
+            # Ce `finally` existe pour garantir qu'un rapport est *toujours*
+            # créé (§9.3) — il ne doit donc jamais pouvoir lui-même faire
+            # échouer la requête. `_nettoyer_valeur_brute` retire déjà les
+            # octets NUL à la frontière (I4), mais ce filet couvre toute
+            # autre valeur qu'un `jsonb` Postgres refuserait : le rapport et
+            # ses compteurs restent la trace qui compte, le contenu brut de
+            # la ligne est secondaire.
+            logger.exception(
+                "Écriture des lignes du rapport d'import %s impossible ; "
+                "repli sur des lignes sans contenu brut.",
+                rapport.pk,
+            )
+            AlumniImportError.objects.bulk_create(
+                [
+                    AlumniImportError(
+                        import_run=rapport,
+                        line_number=numero,
+                        raw_row={},
+                        message=message,
+                    )
+                    for numero, ligne, message in lignes_rapport
+                ]
+            )
     return rapport
