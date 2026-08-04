@@ -191,3 +191,165 @@ def test_send_invitation_envoie_un_lien_vers_le_frontend(profil, mailoutbox, set
     assert len(mailoutbox) == 1
     assert mailoutbox[0].to == ["awa@example.org"]
     assert "https://bamfa.example/alumni/activation?token=" in mailoutbox[0].body
+
+
+# --- C1 : un profil suspendu ou archivé ne doit ni activer ni se connecter ---
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "statut", [AlumniProfile.Status.SUSPENDU, AlumniProfile.Status.ARCHIVE]
+)
+def test_resolve_invitation_token_refuse_un_profil_non_actif(statut):
+    create_roles()
+    profil = AlumniProfile.objects.create(
+        first_name="Awa",
+        last_name="Doe",
+        email="awa@example.org",
+        promotion=2018,
+        status=statut,
+    )
+    jeton = build_invitation_token(profil)
+
+    with pytest.raises(InvitationInvalid) as exc:
+        resolve_invitation_token(jeton)
+
+    # Même message qu'un jeton altéré : ne doit pas révéler qu'une personne a
+    # été suspendue ou archivée (§12.3, non-énumération).
+    assert str(exc.value) == "Ce lien d'invitation est invalide."
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "statut", [AlumniProfile.Status.SUSPENDU, AlumniProfile.Status.ARCHIVE]
+)
+def test_claim_invitation_refuse_un_profil_non_actif(statut):
+    """C'est `claim_invitation`, pas seulement `resolve_invitation_token`, qui
+    doit refuser : le statut peut changer entre les deux appels."""
+    profil = AlumniProfile.objects.create(
+        first_name="Awa",
+        last_name="Doe",
+        email="awa@example.org",
+        promotion=2018,
+        status=statut,
+    )
+
+    with pytest.raises(InvitationInvalid):
+        claim_invitation(profil, password=MOT_DE_PASSE)
+
+    assert User.objects.count() == 0
+    profil.refresh_from_db()
+    assert profil.user_id is None
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("statut", ["suspendu", "archive"])
+def test_endpoint_verifier_refuse_un_profil_suspendu_ou_archive(statut, mailoutbox):
+    create_roles()
+    profil = AlumniProfile.objects.create(
+        first_name="Awa",
+        last_name="Doe",
+        email="awa@example.org",
+        promotion=2018,
+        status=statut,
+    )
+    jeton = build_invitation_token(profil)
+
+    response = APIClient().post(VERIFIER, {"token": jeton}, format="json")
+
+    assert response.status_code == 400
+    assert response.data["error"]["details"]["token"] == [
+        "Ce lien d'invitation est invalide."
+    ]
+    assert User.objects.count() == 0
+    assert len(mailoutbox) == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("statut", ["suspendu", "archive"])
+def test_endpoint_activer_refuse_un_profil_suspendu_ou_archive(statut, mailoutbox):
+    create_roles()
+    profil = AlumniProfile.objects.create(
+        first_name="Awa",
+        last_name="Doe",
+        email="awa@example.org",
+        promotion=2018,
+        status=statut,
+    )
+    jeton = build_invitation_token(profil)
+
+    response = APIClient().post(
+        ACTIVER, {"token": jeton, "password": MOT_DE_PASSE}, format="json"
+    )
+
+    assert response.status_code == 400
+    assert response.data["error"]["details"]["token"] == [
+        "Ce lien d'invitation est invalide."
+    ]
+    assert User.objects.count() == 0
+    profil.refresh_from_db()
+    assert profil.user_id is None
+    assert len(mailoutbox) == 0
+
+
+# --- I6 : un compte déjà rattaché à un autre profil ne peut pas être repris ---
+
+
+@pytest.mark.django_db
+def test_claim_invitation_refuse_un_compte_deja_rattache_a_un_autre_profil():
+    """L'administrateur modifie l'e-mail du profil A (l'e-mail du compte ne
+    suit pas, §PATCH admin) ; un profil B importé porte ensuite l'ancienne
+    adresse. Sans le contrôle, `profile.save()` sur B lèverait un
+    `IntegrityError` sur la contrainte d'unicité de `user_id`."""
+    profil_a = AlumniProfile.objects.create(
+        first_name="Awa",
+        last_name="Doe",
+        email="ancien@example.org",
+        promotion=2018,
+    )
+    compte, _ = claim_invitation(profil_a, password=MOT_DE_PASSE)
+    profil_a.email = "nouveau@example.org"
+    profil_a.save(update_fields=["email"])
+
+    profil_b = AlumniProfile.objects.create(
+        first_name="Kofi",
+        last_name="Mensah",
+        email="ancien@example.org",
+        promotion=2019,
+    )
+
+    with pytest.raises(InvitationInvalid):
+        claim_invitation(profil_b, password=MOT_DE_PASSE)
+
+    profil_b.refresh_from_db()
+    assert profil_b.user_id is None
+    profil_a.refresh_from_db()
+    assert profil_a.user_id == compte.pk
+
+
+@pytest.mark.django_db
+def test_endpoint_activer_traduit_le_compte_deja_rattache_en_400():
+    profil_a = AlumniProfile.objects.create(
+        first_name="Awa",
+        last_name="Doe",
+        email="ancien@example.org",
+        promotion=2018,
+    )
+    claim_invitation(profil_a, password=MOT_DE_PASSE)
+    profil_a.email = "nouveau@example.org"
+    profil_a.save(update_fields=["email"])
+
+    profil_b = AlumniProfile.objects.create(
+        first_name="Kofi",
+        last_name="Mensah",
+        email="ancien@example.org",
+        promotion=2019,
+    )
+    jeton = build_invitation_token(profil_b)
+
+    response = APIClient().post(
+        ACTIVER, {"token": jeton, "password": MOT_DE_PASSE}, format="json"
+    )
+
+    assert response.status_code == 400
+    assert User.objects.filter(email="ancien@example.org").count() == 1

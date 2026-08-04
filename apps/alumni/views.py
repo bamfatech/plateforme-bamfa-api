@@ -316,6 +316,10 @@ class AdminProfileViewSet(
             raise ValidationError(
                 {"compte": ["Ce profil possède déjà un compte de connexion."]}
             )
+        if profile.status != AlumniProfile.Status.ACTIF:
+            raise ValidationError(
+                {"statut": ["Un profil suspendu ou archivé ne peut pas être invité."]}
+            )
         services.send_invitation(profile)
         return self._repondre(profile)
 

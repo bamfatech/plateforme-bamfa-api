@@ -13,6 +13,13 @@ INVITATION_SALT = "alumni-invitation"
 INVITATION_MAX_AGE = 7 * 24 * 3600  # 7 jours
 ALUMNI_GROUP = "Alumni"
 
+# Message volontairement identique à celui d'un jeton altéré (voir
+# `resolve_invitation_token` et `claim_invitation`) : un profil suspendu ou
+# archivé ne doit pas être distinguable d'un jeton invalide, sans quoi
+# l'erreur révélerait qu'une personne a été suspendue (§12.3 de la spec —
+# non-énumération).
+INVITATION_JETON_INVALIDE = "Ce lien d'invitation est invalide."
+
 
 class InvitationError(Exception):
     """Base des erreurs d'invitation."""
@@ -55,13 +62,20 @@ def resolve_invitation_token(token):
     except signing.SignatureExpired as exc:
         raise InvitationExpired("Ce lien d'invitation a expiré.") from exc
     except signing.BadSignature as exc:
-        raise InvitationInvalid("Ce lien d'invitation est invalide.") from exc
+        raise InvitationInvalid(INVITATION_JETON_INVALIDE) from exc
 
     profile = AlumniProfile.objects.filter(pk=data.get("profile_id")).first()
     if profile is None:
-        raise InvitationInvalid("Ce lien d'invitation est invalide.")
+        raise InvitationInvalid(INVITATION_JETON_INVALIDE)
     if profile.user_id is not None:
         raise InvitationAlreadyUsed("Cet accès a déjà été activé.")
+    if profile.status != AlumniProfile.Status.ACTIF:
+        # Un profil suspendu ou archivé ne doit pas pouvoir activer un accès :
+        # ni l'un ni l'autre des deux moitiés du cycle de vie (suspension,
+        # invitation) ne regardait `status` avant ce correctif — voir C1 de la
+        # revue finale. Même message que le jeton altéré : ne pas révéler
+        # qu'une personne a été suspendue.
+        raise InvitationInvalid(INVITATION_JETON_INVALIDE)
     return profile
 
 
@@ -72,15 +86,29 @@ def claim_invitation(profile, *, password):
     Renvoie `(user, created)`. Si un compte porte déjà cette adresse, il est
     rattaché **sans** que son mot de passe soit modifié : l'invitation ne doit
     jamais servir à réécrire les identifiants d'un compte en place.
+
+    C'est ici, et non dans `resolve_invitation_token`, que le contrôle de
+    statut fait foi : le statut du profil peut changer entre la résolution du
+    jeton et l'acquisition (fenêtre de course, ou suspension décidée entre
+    les deux appels).
     """
     if profile.user_id is not None:
         raise InvitationAlreadyUsed("Cet accès a déjà été activé.")
+    if profile.status != AlumniProfile.Status.ACTIF:
+        raise InvitationInvalid(INVITATION_JETON_INVALIDE)
 
     User = get_user_model()
     groupe = Group.objects.get(name=ALUMNI_GROUP)
     existant = User.objects.filter(email=profile.email).first()
 
     if existant is not None:
+        # `AlumniProfile.user` est un `OneToOneField` : un compte déjà
+        # rattaché à un *autre* profil ne peut pas l'être une seconde fois
+        # (l'e-mail du compte a pu diverger de celui du profil après un
+        # `PATCH` administrateur — voir I6 de la revue finale). Sans ce
+        # contrôle, `profile.save()` lèverait un `IntegrityError` non traduit.
+        if AlumniProfile.objects.filter(user=existant).exclude(pk=profile.pk).exists():
+            raise InvitationInvalid(INVITATION_JETON_INVALIDE)
         user, created = existant, False
     else:
         user = User.objects.create_user(

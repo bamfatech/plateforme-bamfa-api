@@ -234,6 +234,23 @@ def test_inviter_un_profil_qui_a_deja_un_compte_est_refuse(mailoutbox):
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "statut", [AlumniProfile.Status.SUSPENDU, AlumniProfile.Status.ARCHIVE]
+)
+def test_inviter_un_profil_suspendu_ou_archive_est_refuse(statut, mailoutbox):
+    """C1 : ni le bouton front ni l'API ne doivent laisser inviter un profil
+    qui n'est plus actif — sans quoi il pourrait activer un compte et se
+    connecter malgré la suspension ou l'archivage."""
+    profil = _profil(status=statut)
+
+    response = _client("Administrateur").post(f"{LISTE}{profil.pk}/inviter/")
+
+    assert response.status_code == 400
+    assert len(mailoutbox) == 0
+    assert User.objects.filter(email=profil.email).count() == 0
+
+
+@pytest.mark.django_db
 def test_filtre_a_un_compte():
     user = User.objects.create_user(email="avec@example.org", password="x")
     _profil(email="avec@example.org", user=user)
