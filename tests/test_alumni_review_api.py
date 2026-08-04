@@ -172,6 +172,67 @@ def test_l_approbation_concurrente_renvoie_400_et_non_500(demande, monkeypatch):
 
 
 @pytest.mark.django_db
+def test_l_approbation_lie_le_profil_existant_si_l_email_a_ete_importee_entre_temps(
+    demande, mailoutbox
+):
+    """I1 : l'e-mail de la demande a été importé par ailleurs (ou approuvé
+    depuis une autre demande) avant l'instruction. L'approbation doit lier
+    la demande au profil existant — la personne est déjà membre — plutôt que
+    de tenter d'en créer un second, ce qui violerait l'unicité de l'e-mail."""
+    profil_existant = AlumniProfile.objects.create(
+        first_name="Awa",
+        last_name="Doe",
+        email="awa@example.org",
+        promotion=2018,
+        source=AlumniProfile.Source.IMPORT,
+    )
+    client = _client("Administrateur")
+
+    response = client.post(f"{LISTE}{demande.pk}/approuver/")
+
+    assert response.status_code == 200
+    assert AlumniProfile.objects.count() == 1
+    demande.refresh_from_db()
+    assert demande.status == AlumniRegistration.Status.APPROUVEE
+    assert demande.profile == profil_existant
+    assert len(mailoutbox) == 1
+
+
+@pytest.mark.django_db
+def test_l_approbation_traduit_en_400_une_collision_detectee_a_l_ecriture(
+    demande, monkeypatch
+):
+    """Filet de sécurité : une collision d'e-mail apparue entre la
+    vérification de pré-existence et l'écriture elle-même (fenêtre de
+    course) doit renvoyer 400, jamais l'`IntegrityError` brute en 500."""
+    AlumniProfile.objects.create(
+        first_name="Autre",
+        last_name="Profil",
+        email="awa@example.org",
+        promotion=2018,
+    )
+    filtre_original = AlumniProfile.objects.filter
+
+    def _filtre_aveugle_a_la_collision(*args, **kwargs):
+        if kwargs.get("email") == "awa@example.org":
+            return AlumniProfile.objects.none()
+        return filtre_original(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "apps.alumni.services.AlumniProfile.objects.filter",
+        _filtre_aveugle_a_la_collision,
+    )
+    client = _client("Administrateur")
+
+    response = client.post(f"{LISTE}{demande.pk}/approuver/")
+
+    assert response.status_code == 400
+    assert AlumniProfile.objects.count() == 1
+    demande.refresh_from_db()
+    assert demande.status == AlumniRegistration.Status.EN_ATTENTE
+
+
+@pytest.mark.django_db
 def test_la_secretaire_lit_la_file_mais_ne_peut_pas_approuver(demande):
     client = _client("Secrétaire")
 

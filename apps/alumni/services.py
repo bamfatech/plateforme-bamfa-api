@@ -2,7 +2,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 from django.core import signing
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.common.tasks import send_templated_email_task
@@ -179,6 +179,22 @@ class RegistrationAlreadyReviewed(Exception):
     """
 
 
+REGISTRATION_APPROVAL_CONFLICT_MESSAGE = (
+    "Un profil existe déjà pour cette adresse e-mail. Réessayez l'approbation."
+)
+
+
+class RegistrationApprovalConflict(Exception):
+    """Le profil n'a pas pu être créé au moment de l'approbation.
+
+    Filet de sécurité pour une collision d'e-mail apparue entre la
+    vérification (`AlumniProfile.objects.filter(email=...).first()`) et
+    l'écriture elle-même — un import concurrent, par exemple. Le cas normal
+    (le profil existe déjà, tout simplement) est traité juste avant, sans
+    lever cette exception : voir `approve_registration`.
+    """
+
+
 def approve_registration(registration, *, reviewer):
     """Crée le membre depuis la demande, puis envoie le lien d'invitation.
 
@@ -189,6 +205,12 @@ def approve_registration(registration, *, reviewer):
     contrôle de statut : c'est ce verrou, et non la vérification faite par la
     vue avant l'appel, qui garantit qu'une même demande ne peut être
     approuvée deux fois.
+
+    Une demande peut porter une adresse qui a entre-temps été importée (ou
+    approuvée depuis une autre demande) : la personne est alors déjà membre.
+    Dans ce cas, la demande est liée au profil existant plutôt que de tenter
+    d'en créer un second, qui violerait l'unicité de l'e-mail — c'est le
+    comportement métier juste, pas seulement l'évitement d'une erreur.
     """
     with transaction.atomic():
         registration = AlumniRegistration.objects.select_for_update().get(
@@ -197,10 +219,22 @@ def approve_registration(registration, *, reviewer):
         if registration.status != AlumniRegistration.Status.EN_ATTENTE:
             raise RegistrationAlreadyReviewed(REGISTRATION_ALREADY_REVIEWED_MESSAGE)
 
-        profile = AlumniProfile.objects.create(
-            source=AlumniProfile.Source.INSCRIPTION,
-            **{champ: getattr(registration, champ) for champ in PROFILE_COPY_FIELDS},
-        )
+        profile = AlumniProfile.objects.filter(email=registration.email).first()
+        if profile is None:
+            try:
+                with transaction.atomic():
+                    profile = AlumniProfile.objects.create(
+                        source=AlumniProfile.Source.INSCRIPTION,
+                        **{
+                            champ: getattr(registration, champ)
+                            for champ in PROFILE_COPY_FIELDS
+                        },
+                    )
+            except IntegrityError as exc:
+                raise RegistrationApprovalConflict(
+                    REGISTRATION_APPROVAL_CONFLICT_MESSAGE
+                ) from exc
+
         registration.status = AlumniRegistration.Status.APPROUVEE
         registration.reviewed_by = reviewer
         registration.reviewed_at = timezone.now()

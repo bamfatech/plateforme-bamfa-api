@@ -141,14 +141,19 @@ class InvitationActivateView(APIView):
 
 @contextmanager
 def _already_reviewed_as_400():
-    """Traduit en `ValidationError` DRF (400) le refus qui fait foi côté
-    service (`RegistrationAlreadyReviewed`, posé sous verrou). Même forme que
-    `_invitation_errors_as_400()` ci-dessus : point de traduction unique pour
-    les deux actions, plutôt qu'un `try/except` dupliqué dans chacune.
+    """Traduit en `ValidationError` DRF (400) les refus qui font foi côté
+    service, posés sous verrou : demande déjà instruite
+    (`RegistrationAlreadyReviewed`) ou collision d'e-mail à la création du
+    profil (`RegistrationApprovalConflict`, voir I1 de la revue finale).
+    Même forme que `_invitation_errors_as_400()` ci-dessus : point de
+    traduction unique pour les deux actions, plutôt qu'un `try/except`
+    dupliqué dans chacune.
     """
     try:
         yield
     except services.RegistrationAlreadyReviewed as exc:
+        raise ValidationError({"statut": [str(exc)]}) from exc
+    except services.RegistrationApprovalConflict as exc:
         raise ValidationError({"statut": [str(exc)]}) from exc
 
 
