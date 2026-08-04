@@ -6,6 +6,7 @@ from django.core.management.base import BaseCommand
 
 from apps.accounts.models import Mandate
 from apps.accounts.roles import create_roles
+from apps.alumni.models import AlumniProfile
 
 User = get_user_model()
 
@@ -38,6 +39,51 @@ DEMO_USERS = [
 
 DEMO_PASSWORD = "bamfa1234"
 
+DEMO_ALUMNI = [
+    {
+        "email": "alumni@bamfa.org",
+        "first_name": "Awa",
+        "last_name": "Alumni",
+        "promotion": 2018,
+        "city": "Cotonou",
+        "sector": "numerique",
+        "current_position": "Développeuse",
+        "organization": "BAMFA",
+        "bio": "Passionnée de technologies au service de l'éducation.",
+        "directory_consent": True,
+    },
+    {
+        "email": "kofi.mensah@example.org",
+        "first_name": "Kofi",
+        "last_name": "Mensah",
+        "promotion": 2016,
+        "city": "Porto-Novo",
+        "sector": "agriculture",
+        "current_position": "Ingénieur agronome",
+        "organization": "Coopérative Espoir",
+        "directory_consent": True,
+    },
+    {
+        "email": "fatou.diallo@example.org",
+        "first_name": "Fatou",
+        "last_name": "Diallo",
+        "promotion": 2020,
+        "city": "Parakou",
+        "sector": "sante",
+        "current_position": "Sage-femme",
+        "organization": "Centre de santé de Parakou",
+        "directory_consent": True,
+    },
+    {
+        "email": "sans-consentement@example.org",
+        "first_name": "Yao",
+        "last_name": "Discret",
+        "promotion": 2019,
+        "sector": "finance",
+        "directory_consent": False,
+    },
+]
+
 
 class Command(BaseCommand):
     help = "Peuple un environnement de démonstration (rôles, utilisateurs, mandat). Idempotent."
@@ -68,6 +114,17 @@ class Command(BaseCommand):
                 "is_current": True,
             },
         )
+
+        for spec in DEMO_ALUMNI:
+            profil, _cree = AlumniProfile.objects.get_or_create(
+                email=spec["email"], defaults=spec
+            )
+            # Le profil de démonstration « alumni@bamfa.org » est rattaché à son
+            # compte, pour que la connexion de démonstration mène à un profil.
+            compte = User.objects.filter(email=spec["email"]).first()
+            if compte is not None and profil.user_id is None:
+                profil.user = compte
+                profil.save(update_fields=["user", "updated_at"])
 
         self.stdout.write(
             self.style.SUCCESS("Données de démonstration créées / à jour.")
