@@ -30,7 +30,25 @@ def promotion_serializer_field():
     )
 
 
-class AlumniRegistrationCreateSerializer(serializers.ModelSerializer):
+class NormalizedEmailMixin:
+    """Normalise l'e-mail (minuscules, espaces retirés) une seule fois,
+    réutilisée par tous les sérialiseurs qui acceptent `email` en écriture.
+
+    Le modèle normalise déjà à l'écriture (`AlumniFieldsMixin.save()` et
+    `clean()`), mais un sérialiseur qui laisse passer une casse différente
+    jusque-là expose l'`UniqueValidator` (ou toute vérification applicative
+    de doublon) à une valeur non normalisée — c'est exactement ce qui
+    laissait passer un `PATCH` d'e-mail à la casse différente jusqu'à la
+    contrainte d'unicité en base (voir I5 de la revue finale).
+    """
+
+    def validate_email(self, value):
+        return normalize_email(value)
+
+
+class AlumniRegistrationCreateSerializer(
+    NormalizedEmailMixin, serializers.ModelSerializer
+):
     """Soumission publique. Aucun champ d'instruction n'est exposé."""
 
     promotion = promotion_serializer_field()
@@ -64,7 +82,7 @@ class AlumniRegistrationCreateSerializer(serializers.ModelSerializer):
 
         Ne pas distinguer les deux cas évite d'énumérer les membres.
         """
-        email = normalize_email(value)
+        email = super().validate_email(value)
         deja_membre = AlumniProfile.objects.filter(email=email).exists()
         deja_demande = AlumniRegistration.objects.filter(
             email=email, status=AlumniRegistration.Status.EN_ATTENTE
@@ -138,7 +156,7 @@ class RejectSerializer(serializers.Serializer):
     motif = serializers.CharField(required=False, allow_blank=True, default="")
 
 
-class AdminProfileSerializer(serializers.ModelSerializer):
+class AdminProfileSerializer(NormalizedEmailMixin, serializers.ModelSerializer):
     """Niveau administration : tous les champs, e-mail et téléphone inclus."""
 
     # `promotion` est modifiable ici : le helper partagé est obligatoire, sans
@@ -151,6 +169,27 @@ class AdminProfileSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(
         source="user.email", read_only=True, default=None
     )
+
+    def validate_email(self, value):
+        """`ModelSerializer` attacherait normalement un `UniqueValidator` sur
+        `email` (le modèle porte `unique=True`) — mais ce validateur agit
+        avant la normalisation faite ici (voir `NormalizedEmailMixin`),
+        directement sur la valeur brute envoyée par le client : deux e-mails
+        identiques à la casse près le franchissent tous les deux sans être
+        détectés, et c'est la contrainte d'unicité en base qui tranchait
+        ensuite avec une `IntegrityError` non traduite. Le contrôle
+        d'unicité est donc fait ici, sur la valeur déjà normalisée, avec le
+        validateur par défaut désactivé (`extra_kwargs` ci-dessous).
+        """
+        email = super().validate_email(value)
+        collision = AlumniProfile.objects.filter(email=email)
+        if self.instance is not None:
+            collision = collision.exclude(pk=self.instance.pk)
+        if collision.exists():
+            raise serializers.ValidationError(
+                "Cette adresse e-mail est déjà utilisée par un autre profil."
+            )
+        return email
 
     class Meta:
         model = AlumniProfile
@@ -196,6 +235,10 @@ class AdminProfileSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        # Le `UniqueValidator` que `ModelSerializer` attacherait ici agirait
+        # avant la normalisation de `validate_email` ci-dessus : désactivé,
+        # au profit du contrôle explicite fait sur la valeur normalisée.
+        extra_kwargs = {"email": {"validators": []}}
 
 
 class PublicDirectorySerializer(serializers.ModelSerializer):

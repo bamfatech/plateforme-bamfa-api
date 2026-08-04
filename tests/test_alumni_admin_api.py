@@ -110,6 +110,59 @@ def test_patch_modifie_un_profil():
 
 
 @pytest.mark.django_db
+def test_patch_email_avec_une_casse_differente_est_refuse_en_400():
+    """I5 : sans normalisation avant le contrôle d'unicité, ce PATCH passait
+    la validation puis échouait à l'écriture avec une `IntegrityError` non
+    traduite (500)."""
+    _profil(email="deja@example.org")
+    autre = _profil(email="autre@example.org")
+    client = _client("Administrateur")
+
+    response = client.patch(
+        f"{LISTE}{autre.pk}/", {"email": "DEJA@example.org"}, format="json"
+    )
+
+    assert response.status_code == 400
+    assert "email" in response.data["error"]["details"]
+    autre.refresh_from_db()
+    assert autre.email == "autre@example.org"
+
+
+@pytest.mark.django_db
+def test_patch_email_deja_pris_a_la_meme_casse_renvoie_un_message_francais():
+    """Le `UniqueValidator` généré par `ModelSerializer` répondrait ici en
+    anglais (« This field must be unique. ») : il doit rester désactivé au
+    profit du contrôle explicite, y compris quand les casses correspondent
+    déjà exactement."""
+    _profil(email="deja@example.org")
+    autre = _profil(email="autre@example.org")
+    client = _client("Administrateur")
+
+    response = client.patch(
+        f"{LISTE}{autre.pk}/", {"email": "deja@example.org"}, format="json"
+    )
+
+    assert response.status_code == 400
+    assert response.data["error"]["details"]["email"] == [
+        "Cette adresse e-mail est déjà utilisée par un autre profil."
+    ]
+
+
+@pytest.mark.django_db
+def test_patch_normalise_l_email_en_minuscules():
+    profil = _profil(email="autre@example.org")
+    client = _client("Administrateur")
+
+    response = client.patch(
+        f"{LISTE}{profil.pk}/", {"email": "AUTRE@Example.ORG"}, format="json"
+    )
+
+    assert response.status_code == 200
+    profil.refresh_from_db()
+    assert profil.email == "autre@example.org"
+
+
+@pytest.mark.django_db
 def test_patch_ne_peut_pas_changer_le_statut():
     profil = _profil()
 

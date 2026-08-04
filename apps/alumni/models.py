@@ -78,9 +78,29 @@ class AlumniFieldsMixin(models.Model):
     class Meta:
         abstract = True
 
-    def save(self, *args, **kwargs):
+    def _normalize_shared_fields(self):
+        """Normalisation partagée par `clean()` et `save()` — une seule
+        écriture de la règle (§5.1 de la spec) : l'e-mail est mis en
+        minuscules et débarrassé de ses espaces, `country` retombe sur le
+        défaut du modèle si vide.
+
+        `clean()` **et** `save()` l'appellent : `full_clean()` (utilisé par
+        l'import, `imports._enregistrer`) appelle `clean()` avant `save()`,
+        donc sans cette duplication le repli de `country` et la normalisation
+        de `email` n'auraient pas encore eu lieu au moment où `full_clean()`
+        valide l'instance — ce qui est exactement ce qui rendait
+        `AdminProfileSerializer` incapable de détecter un doublon d'e-mail à
+        la casse près avant l'écriture en base (voir I5 de la revue finale).
+        """
         self.email = normalize_email(self.email)
         self.country = (self.country or "").strip() or DEFAULT_COUNTRY
+
+    def clean(self):
+        super().clean()
+        self._normalize_shared_fields()
+
+    def save(self, *args, **kwargs):
+        self._normalize_shared_fields()
         super().save(*args, **kwargs)
 
 
