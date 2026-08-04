@@ -2,6 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
+    AdminImportViewSet,
     AdminProfileViewSet,
     AdminRegistrationViewSet,
     DirectoryViewSet,
@@ -17,6 +18,7 @@ router.register(
     "admin/inscriptions", AdminRegistrationViewSet, basename="alumni-admin-inscription"
 )
 router.register("admin/profils", AdminProfileViewSet, basename="alumni-admin-profil")
+router.register("admin/imports", AdminImportViewSet, basename="alumni-admin-import")
 
 urlpatterns = [
     path(

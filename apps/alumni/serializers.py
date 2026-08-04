@@ -5,6 +5,8 @@ from rest_framework import serializers
 
 from .models import (
     PROMOTION_MIN,
+    AlumniImport,
+    AlumniImportError,
     AlumniProfile,
     AlumniRegistration,
     normalize_email,
@@ -273,3 +275,41 @@ class SelfProfileSerializer(serializers.ModelSerializer):
             "promotion",
             "status",
         ]
+
+
+class AlumniImportErrorSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AlumniImportError
+        fields = ["id", "line_number", "raw_row", "message"]
+        read_only_fields = fields
+
+
+class AlumniImportSerializer(serializers.ModelSerializer):
+    """Rapport d'import, avec ses lignes en erreur et avertissements."""
+
+    errors = AlumniImportErrorSerializer(many=True, read_only=True)
+    uploaded_by_email = serializers.EmailField(
+        source="uploaded_by.email", read_only=True, default=None
+    )
+
+    class Meta:
+        model = AlumniImport
+        fields = [
+            "id",
+            "filename",
+            "strict",
+            "created_at",
+            "uploaded_by_email",
+            "rows_total",
+            "rows_created",
+            "rows_updated",
+            "rows_skipped",
+            "rows_failed",
+            "errors",
+        ]
+        read_only_fields = fields
+
+
+class AlumniImportCreateSerializer(serializers.Serializer):
+    fichier = serializers.FileField()
+    strict = serializers.BooleanField(default=False)

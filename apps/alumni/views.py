@@ -5,6 +5,7 @@ from drf_spectacular.utils import extend_schema
 from rest_framework import generics, mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,11 +14,19 @@ from apps.accounts.roles import user_has_role
 
 from . import services
 from .filters import AdminProfileFilter, AlumniRegistrationFilter, PublicDirectoryFilter
-from .models import AlumniProfile, AlumniRegistration
-from .permissions import CanManageDirectory, CanReadAdminDirectory, CanReviewRegistrations
+from .imports import ImportFormatError, import_alumni, parse_csv
+from .models import AlumniImport, AlumniProfile, AlumniRegistration
+from .permissions import (
+    CanImportAlumni,
+    CanManageDirectory,
+    CanReadAdminDirectory,
+    CanReviewRegistrations,
+)
 from .serializers import (
     DOUBLON_MESSAGE,
     AdminProfileSerializer,
+    AlumniImportCreateSerializer,
+    AlumniImportSerializer,
     AlumniRegistrationAdminSerializer,
     AlumniRegistrationCreateSerializer,
     InvitationActivateSerializer,
@@ -329,3 +338,40 @@ class SelfProfileView(generics.RetrieveUpdateAPIView):
         if profile is None:
             raise NotFound("Aucun profil alumni n'est rattaché à ce compte.")
         return profile
+
+
+@extend_schema(tags=["alumni"])
+class AdminImportViewSet(
+    mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet
+):
+    """Dépôt d'un fichier d'alumni et consultation des rapports."""
+
+    queryset = AlumniImport.objects.select_related("uploaded_by").prefetch_related(
+        "errors"
+    )
+    serializer_class = AlumniImportSerializer
+    permission_classes = [CanImportAlumni]
+    parser_classes = [MultiPartParser, FormParser]
+
+    @extend_schema(
+        request=AlumniImportCreateSerializer, responses={201: AlumniImportSerializer}
+    )
+    def create(self, request):
+        serializer = AlumniImportCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        fichier = serializer.validated_data["fichier"]
+
+        try:
+            lignes = parse_csv(fichier)
+        except (ImportFormatError, UnicodeDecodeError) as exc:
+            raise ValidationError({"fichier": [str(exc)]}) from exc
+
+        rapport = import_alumni(
+            lignes,
+            uploaded_by=request.user,
+            strict=serializer.validated_data["strict"],
+            filename=fichier.name,
+        )
+        return Response(
+            AlumniImportSerializer(rapport).data, status=status.HTTP_201_CREATED
+        )
